@@ -35,19 +35,43 @@ def login() -> None:
     logger.info("Authenticated with NASA Earthdata")
 
 
+# NISAR-specific S3 credential endpoint (using daac='ASF' will fail for NISAR;
+# see https://github.com/earthaccess-dev/earthaccess/issues/1184).
+_NISAR_S3_ENDPOINT = "https://nisar.asf.earthdatacloud.nasa.gov/s3credentials"
+
+
 def get_s3_filesystem() -> s3fs.S3FileSystem:
-    """Return an authenticated S3 filesystem for NASA Earthdata Cloud.
+    """Return an authenticated S3 filesystem for NISAR data in Earthdata Cloud.
+
+    Uses the NISAR-specific S3 credential endpoint. Direct S3 access is only
+    available from within AWS ``us-west-2`` (e.g., CryoCloud, EC2). For access
+    outside that region, use :func:`get_https_filesystem` instead.
 
     Requires prior authentication via :func:`login`.
 
     Returns:
         Authenticated ``s3fs.S3FileSystem`` instance.
     """
-    credentials = earthaccess.get_s3_credentials(daac="ASF")
+    auth = earthaccess.login()
+    credentials = auth.get_s3_credentials(endpoint=_NISAR_S3_ENDPOINT)
     fs = s3fs.S3FileSystem(
         key=credentials["accessKeyId"],
         secret=credentials["secretAccessKey"],
         token=credentials["sessionToken"],
     )
-    logger.info("Created authenticated S3 filesystem for ASF DAAC")
+    logger.info("Created authenticated S3 filesystem for NISAR")
+    return fs
+
+
+def get_https_filesystem() -> "fsspec.AbstractFileSystem":
+    """Return an authenticated HTTPS filesystem for NISAR data.
+
+    Works from anywhere (Colab, local, CHPC) — no AWS region restriction.
+    Requires prior authentication via :func:`login`.
+
+    Returns:
+        Authenticated ``fsspec`` HTTPS filesystem.
+    """
+    fs = earthaccess.get_fsspec_https_session()
+    logger.info("Created authenticated HTTPS filesystem for NISAR")
     return fs

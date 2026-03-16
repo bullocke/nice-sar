@@ -36,7 +36,7 @@ def search_nisar(
         List of ``asf_search`` result objects.
     """
     search_kwargs: dict = {
-        "platform": asf_search.PLATFORM.NISAR,
+        "dataset": "NISAR",
         "maxResults": max_results,
     }
 

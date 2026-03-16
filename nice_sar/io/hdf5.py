@@ -1,6 +1,6 @@
 """Core HDF5 reader for NISAR products.
 
-Provides transparent access to local and S3-hosted NISAR HDF5 files.
+Provides transparent access to local, S3-hosted, and HTTPS-streamed NISAR HDF5 files.
 """
 
 from __future__ import annotations
@@ -20,25 +20,26 @@ def open_nisar(
     path: PathType,
     filesystem: s3fs.S3FileSystem | None = None,
 ) -> h5py.File:
-    """Open a NISAR HDF5 file from local disk or S3.
+    """Open a NISAR HDF5 file from local disk, S3, or HTTPS.
 
     Args:
-        path: Local file path or S3 URI (``s3://bucket/key``).
-        filesystem: Authenticated S3 filesystem. Required for S3 paths.
+        path: Local file path, S3 URI (``s3://...``), or HTTPS URL.
+        filesystem: Authenticated filesystem (``s3fs.S3FileSystem`` or
+            ``fsspec`` HTTPS session). Required for S3 and HTTPS paths.
 
     Returns:
         Open ``h5py.File`` handle in read mode.
 
     Raises:
         FileNotFoundError: If local path does not exist.
-        ValueError: If S3 path given without filesystem.
+        ValueError: If remote path given without filesystem.
     """
     path_str = str(path)
 
-    if path_str.startswith("s3://"):
+    if path_str.startswith("s3://") or path_str.startswith("https://"):
         if filesystem is None:
-            raise ValueError("An authenticated S3FileSystem is required for S3 paths.")
-        logger.info("Opening NISAR file from S3: %s", path_str)
+            raise ValueError("An authenticated filesystem is required for remote paths.")
+        logger.info("Opening NISAR file from remote: %s", path_str)
         f = filesystem.open(path_str, "rb")
         return h5py.File(f, "r")
 

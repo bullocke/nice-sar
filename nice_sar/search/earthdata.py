@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def search_earthdata(
-    short_name: str = "NISAR_L2_PR_GCOV",
+    short_name: str = "NISAR_L2_GCOV_BETA_V1",
     bbox: BBox | None = None,
     temporal: tuple[str, str] | None = None,
     count: int = 100,

@@ -28,7 +28,7 @@ class TestOpenNisar:
             open_nisar(tmp_path / "nonexistent.h5")
 
     def test_s3_path_without_filesystem(self) -> None:
-        with pytest.raises(ValueError, match="S3FileSystem"):
+        with pytest.raises(ValueError, match="filesystem"):
             open_nisar("s3://bucket/key.h5")
 
 
