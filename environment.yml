@@ -1,0 +1,34 @@
+name: nisar
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.12
+  # Core geospatial
+  - h5py
+  - rasterio
+  - xarray
+  - dask
+  - numpy
+  - scipy
+  - shapely
+  - geopandas
+  - pyproj
+  - scikit-image
+  # Cloud access
+  - s3fs
+  - boto3
+  - fsspec
+  # Visualization
+  - matplotlib
+  # Dev tools
+  - pre-commit
+  - ruff
+  - mypy
+  - pytest
+  - pytest-cov
+  # Pip-only packages
+  - pip
+  - pip:
+      - earthaccess
+      - asf_search
+      - hatchling

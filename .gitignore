@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# SAR data files
+*.h5
+*.hdf5
+*.he5
+*.tif
+*.tiff
+*.nc
+*.nc4
+*.zip
+
+# Large data directories
+data/
+Data/
+GCOV_Data/
+scratch/
+
+# Environment and credentials
+.env
+*.env
+.netrc
+*.credentials
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
+
+# MkDocs
+site/
+
+# Original folders
+Objectives/
+Old Code/
+Plan/
+
+# Copilot
+.github/copilot-instructions.md
+
+# Random
+.cache/
+
+.pre-commit-config.yaml

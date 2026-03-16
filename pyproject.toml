@@ -1,0 +1,96 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nice-sar"
+version = "0.1.0"
+description = "NISAR SAR data processing and analysis toolkit"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [
+    { name = "Eric Bullock" },
+]
+keywords = ["SAR", "NISAR", "remote-sensing", "geospatial", "InSAR", "polarimetry"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+
+dependencies = [
+    "h5py>=3.10",
+    "rasterio>=1.3",
+    "xarray>=2024.1",
+    "dask[array]>=2024.1",
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "shapely>=2.0",
+    "geopandas>=0.14",
+    "pyproj>=3.6",
+    "s3fs>=2024.2",
+    "boto3>=1.34",
+    "fsspec>=2024.2",
+    "matplotlib>=3.8",
+    "earthaccess>=0.9",
+    "asf_search>=7.0",
+    "scikit-image>=0.22",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-xdist>=3.5",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+]
+notebooks = [
+    "jupyter>=1.0",
+    "jupyterlab>=4.0",
+    "ipywidgets>=8.1",
+]
+viz = [
+    "folium>=0.15",
+    "hvplot>=0.9",
+    "holoviews>=1.18",
+    "datashader>=0.16",
+]
+dev = [
+    "nice-sar[test,docs,notebooks,viz]",
+    "pre-commit>=3.6",
+    "ruff>=0.3",
+    "mypy>=1.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/bullocke/nice-sar"
+Repository = "https://github.com/bullocke/nice-sar"
+Issues = "https://github.com/bullocke/nice-sar/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=nice_sar"
