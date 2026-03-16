@@ -1,5 +1,9 @@
 # nice-sar
 
+> **⚠️ Early Development — Not Ready for Production Use**
+>
+> This package is in the early stages of development. APIs are unstable, functionality is incomplete, and nothing has been validated against real NISAR data yet. Use at your own risk and expect breaking changes. Contributions and feedback are welcome.
+
 A Python toolkit for processing and analyzing SAR data from the NASA-ISRO **NISAR** satellite.
 
 ## Features
