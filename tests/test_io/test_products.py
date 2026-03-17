@@ -7,7 +7,6 @@ from pathlib import Path
 import dask.array as da
 import h5py
 import numpy as np
-import pytest
 import xarray as xr
 from pyproj import CRS
 from rasterio.transform import Affine

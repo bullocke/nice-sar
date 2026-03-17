@@ -60,6 +60,5 @@ class TestGetPolarizations:
         assert all(isinstance(p, str) for p in pols)
 
     def test_missing_frequency_raises(self, synthetic_gcov_path: Path) -> None:
-        with h5py.File(synthetic_gcov_path, "r") as h5:
-            with pytest.raises(KeyError):
-                get_polarizations(h5, frequency="B")
+        with h5py.File(synthetic_gcov_path, "r") as h5, pytest.raises(KeyError):
+            get_polarizations(h5, frequency="B")

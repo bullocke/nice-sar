@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
 from pathlib import Path
 
-from nice_sar.io.geotiff import export_geotiff, write_rgb_geotiff_uint8, read_band
+import numpy as np
+import pytest
+
+from nice_sar.io.geotiff import export_geotiff, read_band, write_rgb_geotiff_uint8
 
 
 @pytest.fixture()

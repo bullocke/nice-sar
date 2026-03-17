@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 import dask.array as da
+import fsspec
 import h5py
 import numpy as np
 import xarray as xr
@@ -75,7 +76,7 @@ def read_gcov(
     frequency: str = "A",
     polarization: str = "HH",
     chunks: dict | None = None,
-    filesystem: "s3fs.S3FileSystem | None" = None,
+    filesystem: fsspec.AbstractFileSystem | None = None,
 ) -> xr.DataArray:
     """Read a GCOV polarization band as a lazy xarray DataArray.
 

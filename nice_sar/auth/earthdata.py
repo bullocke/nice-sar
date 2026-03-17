@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 import earthaccess
+import fsspec
 import s3fs
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ def get_s3_filesystem() -> s3fs.S3FileSystem:
     return fs
 
 
-def get_https_filesystem() -> "fsspec.AbstractFileSystem":
+def get_https_filesystem() -> fsspec.AbstractFileSystem:
     """Return an authenticated HTTPS filesystem for NISAR data.
 
     Works from anywhere (Colab, local, CHPC) — no AWS region restriction.

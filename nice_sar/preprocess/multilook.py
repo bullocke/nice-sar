@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy import ndimage
 
 from nice_sar._types import ArrayFloat32
 

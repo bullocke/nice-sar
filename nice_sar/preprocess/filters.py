@@ -10,7 +10,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-
 from scipy import ndimage
 
 from nice_sar._types import ArrayFloat32
@@ -43,7 +42,8 @@ def lee_filter(data: np.ndarray, window_size: int = 5) -> ArrayFloat32:
     local_sum = ndimage.uniform_filter(safe, size=window_size, mode="reflect") * window_size**2
     local_mean = np.asarray(local_sum / wsum, dtype=np.float64)
 
-    local_sq_sum = ndimage.uniform_filter(safe**2, size=window_size, mode="reflect") * window_size**2
+    sq_filter = ndimage.uniform_filter(safe**2, size=window_size, mode="reflect")
+    local_sq_sum = sq_filter * window_size**2
     local_var = np.maximum(np.asarray(local_sq_sum / wsum, dtype=np.float64) - local_mean**2, 0.0)
 
     overall_var = np.nanvar(filtered[valid_mask]) + 1e-10
