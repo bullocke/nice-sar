@@ -60,7 +60,8 @@ def get_frequencies(h5: h5py.File) -> list[str]:
         List of frequency labels (e.g., ``["A"]`` or ``["A", "B"]``).
     """
     id_path = "/science/LSAR/identification"
-    return h5[f"{id_path}/listOfFrequencies"][:].astype(str).tolist()
+    result: list[str] = h5[f"{id_path}/listOfFrequencies"][:].astype(str).tolist()
+    return result
 
 
 def get_polarizations(h5: h5py.File, frequency: str = "A") -> list[str]:
@@ -77,5 +78,6 @@ def get_polarizations(h5: h5py.File, frequency: str = "A") -> list[str]:
         grid_path = f"/science/LSAR/{product}/grids/frequency{frequency}"
         pol_path = f"{grid_path}/listOfPolarizations"
         if pol_path in h5:
-            return h5[pol_path][:].astype(str).tolist()
+            result: list[str] = h5[pol_path][:].astype(str).tolist()
+            return result
     raise KeyError(f"No polarization list found for frequency {frequency}")

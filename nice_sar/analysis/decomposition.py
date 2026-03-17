@@ -46,8 +46,8 @@ def build_coherency_matrix(
         if np.iscomplexobj(arr):
             mr = ndimage.uniform_filter(arr.real, size=window, mode="nearest")
             mi = ndimage.uniform_filter(arr.imag, size=window, mode="nearest")
-            return mr + 1j * mi
-        return ndimage.uniform_filter(arr, size=window, mode="nearest")
+            return np.asarray(mr + 1j * mi)
+        return np.asarray(ndimage.uniform_filter(arr, size=window, mode="nearest"))
 
     c11 = _smooth(covariances["HHHH"])
     c22 = _smooth(covariances["HVHV"])
@@ -79,7 +79,7 @@ def build_coherency_matrix(
     UC = np.einsum("ij,jkn->ikn", _PAULI_U, C_flat)
     T_flat = np.einsum("ijn,kj->ikn", UC, np.conj(_PAULI_U))
 
-    return T_flat.reshape(3, 3, rows, cols)
+    return np.asarray(T_flat.reshape(3, 3, rows, cols))
 
 
 def freeman_durden(T: np.ndarray) -> tuple[ArrayFloat32, ArrayFloat32, ArrayFloat32]:
@@ -207,4 +207,4 @@ def compute_pauli_rgb(
     R = np.abs(hh - vv).astype(np.float32)
     G = (np.sqrt(2.0) * np.abs(hv)).astype(np.float32)
     B = np.abs(hh + vv).astype(np.float32)
-    return np.stack([R, G, B], axis=0)
+    return np.asarray(np.stack([R, G, B], axis=0))

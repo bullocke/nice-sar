@@ -39,6 +39,6 @@ def search_earthdata(
         kwargs["temporal"] = temporal
 
     logger.info("Searching Earthdata for %s...", short_name)
-    results = earthaccess.search_data(**kwargs)
+    results: list = earthaccess.search_data(**kwargs)
     logger.info("Found %d granules", len(results))
     return results

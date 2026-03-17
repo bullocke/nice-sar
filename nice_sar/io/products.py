@@ -98,7 +98,10 @@ def read_gcov(
 
     # Accept both path and already-open h5py.File
     owns_file = not isinstance(source, h5py.File)
-    h5_file = open_nisar(source, filesystem=filesystem) if owns_file else source
+    if owns_file:  # noqa: SIM108
+        h5_file = open_nisar(source, filesystem=filesystem)  # type: ignore[arg-type]
+    else:
+        h5_file = source  # type: ignore[assignment]
 
     try:
         crs, transform, x_coords, y_coords = get_projection_info(h5_file, frequency)
@@ -117,7 +120,7 @@ def read_gcov(
 
         # Read the dataset into memory so we don't depend on h5py handle lifetime,
         # then wrap in dask for downstream lazy computation.
-        raw = dataset[:].astype(np.float32)
+        raw = np.asarray(dataset[:], dtype=np.float32)
         data = da.from_array(raw, chunks=(chunks["y"], chunks["x"]))
 
         metadata = read_gcov_metadata(h5_file)
@@ -172,15 +175,17 @@ def read_quad_covariances(h5_file: h5py.File, grid_path: str) -> dict[str, np.nd
         arr = h5_file[p][:]
         # h5py ≥3.x may auto-convert compound (r, i) types to numpy complex
         if np.iscomplexobj(arr):
-            return arr.astype(np.complex64)
+            return np.asarray(arr, dtype=np.complex64)
         if (
             hasattr(arr.dtype, "fields")
             and arr.dtype.fields
             and "r" in arr.dtype.fields
             and "i" in arr.dtype.fields
         ):
-            return arr["r"].astype(np.float32) + 1j * arr["i"].astype(np.float32)
-        return arr.astype(np.float32)
+            return np.asarray(arr["r"], dtype=np.float32) + 1j * np.asarray(
+                arr["i"], dtype=np.float32
+            )
+        return np.asarray(arr, dtype=np.float32)
 
     for k in ("HHHH", "HVHV", "VVVV", "HHHV", "HHVV", "HVVV"):
         val = _get(k)

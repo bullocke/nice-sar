@@ -27,4 +27,5 @@ def multilook(data: np.ndarray, looks_y: int = 2, looks_x: int = 2) -> ArrayFloa
     trimmed = data[:trim_r, :trim_c].astype(np.float32)
 
     reshaped = trimmed.reshape(trim_r // looks_y, looks_y, trim_c // looks_x, looks_x)
-    return np.nanmean(reshaped, axis=(1, 3)).astype(np.float32)
+    result: ArrayFloat32 = np.nanmean(reshaped, axis=(1, 3)).astype(np.float32)
+    return result

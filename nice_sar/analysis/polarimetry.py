@@ -33,16 +33,21 @@ def compute_span(
         SPAN array in linear units, or ``None`` if insufficient inputs.
     """
     if hh is not None and vv is not None and hv is not None:
-        return (hh + vv + 2.0 * hv).astype(np.float32)
+        result: ArrayFloat32 = (hh + vv + 2.0 * hv).astype(np.float32)
+        return result
     if hh is not None and vv is not None:
-        return (hh + vv).astype(np.float32)
+        result2: ArrayFloat32 = (hh + vv).astype(np.float32)
+        return result2
     if hh is not None and hv is not None:
-        return (hh + hv).astype(np.float32)
+        result3: ArrayFloat32 = (hh + hv).astype(np.float32)
+        return result3
     if vv is not None and hv is not None:
-        return (vv + hv).astype(np.float32)
+        result4: ArrayFloat32 = (vv + hv).astype(np.float32)
+        return result4
     for arr in (hh, vv, hv):
         if arr is not None:
-            return arr.astype(np.float32)
+            result5: ArrayFloat32 = arr.astype(np.float32)
+            return result5
     return None
 
 
@@ -78,7 +83,8 @@ def compute_rfdi(
         return None
 
     rfdi = (copol - hv) / (copol + hv + 1e-10)
-    return np.clip(rfdi, -1.0, 1.0).astype(np.float32)
+    result: ArrayFloat32 = np.clip(rfdi, -1.0, 1.0).astype(np.float32)
+    return result
 
 
 def volume_proxy(hh: np.ndarray, hv: np.ndarray) -> ArrayFloat32:
@@ -94,7 +100,8 @@ def volume_proxy(hh: np.ndarray, hv: np.ndarray) -> ArrayFloat32:
         Volume proxy array clipped to [0, 1].
     """
     vp = hv / (hh + hv + 1e-10)
-    return np.clip(vp, 0.0, 1.0).astype(np.float32)
+    result: ArrayFloat32 = np.clip(vp, 0.0, 1.0).astype(np.float32)
+    return result
 
 
 def compute_indices(

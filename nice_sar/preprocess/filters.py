@@ -48,7 +48,9 @@ def lee_filter(data: np.ndarray, window_size: int = 5) -> ArrayFloat32:
 
     overall_var = np.nanvar(filtered[valid_mask]) + 1e-10
     weight = local_var / (local_var + overall_var)
-    filtered = (local_mean + weight * (filtered - local_mean)).astype(np.float32)
+    filtered = np.asarray(
+        (local_mean + weight * (filtered - local_mean)), dtype=np.float32,
+    )
     filtered[~valid_mask] = np.nan
     return filtered
 
@@ -114,6 +116,6 @@ def refined_lee_filter(img: np.ndarray, win: int = 7) -> ArrayFloat32:
     )
 
     lee = mean + w * (img - mean)
-    refined = 0.5 * lee + 0.5 * neigh
+    refined = np.asarray(0.5 * lee + 0.5 * neigh, dtype=np.float32)
     refined[~valid] = np.nan
     return refined

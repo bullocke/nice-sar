@@ -406,7 +406,7 @@ def make_dualpol_rgb(
     R = hh_db.copy()
     G = hv_db.copy()
     B = hh_db - hv_db
-    return np.stack([R, G, B], axis=0).astype(np.float32)
+    return np.asarray(np.stack([R, G, B], axis=0), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +455,8 @@ def make_rgb(
     if method not in _RGB_METHODS:
         available = ", ".join(sorted(_RGB_METHODS.keys()))
         raise ValueError(f"Unknown RGB method '{method}'. Available: {available}")
-    return _RGB_METHODS[method]["func"](hh, hv, **kwargs)
+    result: RGBResult = _RGB_METHODS[method]["func"](hh, hv, **kwargs)
+    return result
 
 
 def list_rgb_methods() -> list[str]:

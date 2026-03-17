@@ -53,7 +53,8 @@ def compute_sigma0(
     """
     if rtc_factor is None:
         return None
-    return (gamma0 * rtc_factor).astype(np.float32)
+    result: ArrayFloat32 = (gamma0 * rtc_factor).astype(np.float32)
+    return result
 
 
 def power_transform(data: np.ndarray, gamma: float = 0.5) -> ArrayFloat32:
@@ -81,5 +82,7 @@ def power_transform(data: np.ndarray, gamma: float = 0.5) -> ArrayFloat32:
 
     normalized = (data - min_val) / (max_val - min_val)
     transformed = np.power(np.clip(normalized, 0, 1), gamma)
-    output = (transformed * (max_val - min_val) + min_val).astype(np.float32)
+    output = np.asarray(
+        transformed * (max_val - min_val) + min_val, dtype=np.float32,
+    )
     return output
