@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from nice_sar.analysis.decomposition import (
     build_coherency_matrix,

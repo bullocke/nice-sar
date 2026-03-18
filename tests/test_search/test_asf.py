@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from nice_sar.search.asf import search_gcov, search_nisar
 from nice_sar.search.earthdata import search_earthdata
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

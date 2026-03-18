@@ -1,0 +1,60 @@
+site_name: nice-sar
+site_description: NISAR SAR data processing and analysis toolkit
+site_url: https://bullocke.github.io/nice-sar
+repo_url: https://github.com/bullocke/nice-sar
+repo_name: bullocke/nice-sar
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.highlight
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true
+            heading_level: 3
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - CHPC Guide: chpc-guide.md
+  - Notebooks: notebooks.md
+  - API Reference:
+      - Auth: api/auth.md
+      - Search: api/search.md
+      - I/O: api/io.md
+      - Preprocessing: api/preprocess.md
+      - Analysis: api/analysis.md
+      - Visualization: api/viz.md
