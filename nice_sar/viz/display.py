@@ -49,7 +49,8 @@ def gamma_correct(arr: np.ndarray, gamma: float = 0.5) -> ArrayFloat32:
     Returns:
         Gamma-corrected array.
     """
-    return np.power(np.clip(arr, 0, 1), gamma).astype(np.float32)
+    result: ArrayFloat32 = np.power(np.clip(arr, 0, 1), gamma).astype(np.float32)
+    return result
 
 
 def to_uint8(arr: np.ndarray) -> ArrayUInt8:
@@ -65,4 +66,5 @@ def to_uint8(arr: np.ndarray) -> ArrayUInt8:
     """
     result = np.clip(arr, 0, 1) * 255
     result = np.nan_to_num(result, nan=0.0)
-    return result.astype(np.uint8)
+    out: ArrayUInt8 = result.astype(np.uint8)
+    return out

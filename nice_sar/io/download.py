@@ -89,7 +89,10 @@ def _get_asf_session() -> asf_search.ASFSession:
             "NASA Earthdata authentication required. "
             "Run nice_sar.auth.login() first."
         )
-    token = auth.token["access_token"]
+    token_info = auth.token
+    if token_info is None:
+        raise RuntimeError("No token available from earthaccess.")
+    token = token_info["access_token"]
     session = asf_search.ASFSession()
     session.headers.update({"Authorization": f"Bearer {token}"})
     return session
