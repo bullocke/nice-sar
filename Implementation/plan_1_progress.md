@@ -1,7 +1,7 @@
 # Plan 1 — Implementation Progress
 
 > Tracking progress against the original plan in [`Plan/plan1.md`](../Plan/plan1.md).
-> Last updated: 2026-03-17
+> Last updated: 2026-03-18
 
 ---
 
@@ -187,9 +187,9 @@
 | `tests/test_analysis/test_polarimetry.py` | `analysis/polarimetry.py` | 5 | ✅ Done |
 | `tests/test_viz/test_display.py` | `viz/display.py` | 6 | ✅ Done |
 | `tests/test_viz/test_rgb.py` | `viz/rgb.py` | 3 (parametrized → 14+) | ✅ Done |
-| `tests/test_search/test_asf.py` | `search/asf.py` (mock-based) | — | ⬜ Not yet |
+| `tests/test_search/test_asf.py` | `search/asf.py` + `search/earthdata.py` (mock-based) | 14 | ✅ Done |
 
-**Total: 79 tests passing, 69% coverage**
+**Total: 93 tests passing, 74% coverage**
 
 ### Test Fixtures
 - [x] Synthetic HDF5 in `conftest.py` — mimics `/science/LSAR/GCOV/grids/frequencyA/` with 64×64 arrays
@@ -208,10 +208,10 @@
 | Notebook | Description | Status |
 |---|---|---|
 | `notebooks/00_data_discovery.ipynb` | Search, auth, read, validate GCOV from Earthdata Cloud | ✅ Created & tested in Colab |
-| `notebooks/01_search_and_download.ipynb` | End-to-end search → download workflow | ⬜ Not yet |
-| `notebooks/02_read_gcov.ipynb` | Read GCOV into xarray, explore structure | ⬜ Not yet |
-| `notebooks/03_preprocessing.ipynb` | Calibration, filtering, multilooking | ⬜ Not yet |
-| `notebooks/04_rgb_composites.ipynb` | Generate RGB composites from GCOV | ⬜ Not yet |
+| `notebooks/01_search_and_download.ipynb` | End-to-end search → download workflow | ✅ Created |
+| `notebooks/02_read_gcov.ipynb` | Read GCOV into xarray, explore structure | ✅ Created |
+| `notebooks/03_preprocessing.ipynb` | Calibration, filtering, multilooking | ✅ Created |
+| `notebooks/04_rgb_composites.ipynb` | Generate RGB composites from GCOV | ✅ Created |
 | `notebooks/05_polarimetric_analysis.ipynb` | Polarimetric indices + decomposition | ⬜ Not yet |
 | `notebooks/06_insar_basics.ipynb` | InSAR processing (future) | ⬜ Not yet |
 
@@ -230,19 +230,19 @@
 - [x] `preprocess.calibration` — linear_to_db, sigma0
 - [x] Tests for all above (79 passing, 69% coverage)
 - [x] First push to GitHub
-- [ ] Notebooks 02 (read_gcov) & 04 (RGB composites)
+- [x] Notebooks 02 (read_gcov) & 04 (RGB composites)
 
-**Deliverable**: ✅ Can open NISAR GCOV (local/S3/HTTPS) → read bands → convert dB → RGB composites → export GeoTIFF. Validated against real NISAR data in Colab.
+**Deliverable**: ✅ Complete — Can open NISAR GCOV (local/S3/HTTPS) → read bands → convert dB → RGB composites → export GeoTIFF. Validated against real NISAR data in Colab.
 
 ### Milestone 2: "Search and Process" — Data Discovery + Preprocessing
 - [x] `search.asf` + `search.earthdata` — search wrappers
 - [x] `io.download` — refactored downloader
 - [x] `preprocess.filters` — Lee, Refined Lee
 - [x] `preprocess.texture` — GLCM surrogates
-- [ ] Tests for search (mock-based ASF tests)
-- [ ] Notebooks 01 (search & download) & 03 (preprocessing)
+- [x] Tests for search (mock-based ASF tests — 14 tests)
+- [x] Notebooks 01 (search & download) & 03 (preprocessing)
 
-**Deliverable**: Partially complete — code is implemented but notebooks and search tests are not yet done.
+**Deliverable**: ✅ Complete — code, tests, and notebooks all implemented.
 
 ### Milestone 3: "Analyze" — Polarimetric Analysis
 - [x] `analysis.polarimetry` — indices, SPAN, RFDI, volume proxy
@@ -272,7 +272,7 @@
 | # | Verification | Status |
 |---|---|---|
 | 1 | `ruff check nice_sar/ tests/` — zero errors | ✅ Pass |
-| 2 | `mypy nice_sar/` with `--ignore-missing-imports` | ⬜ Not run (ruff passes) |
+| 2 | `mypy nice_sar/` with `--ignore-missing-imports` | ✅ Pass (0 errors) |
 | 3 | `pytest tests/ --cov=nice_sar` — ≥80% on implemented modules | ✅ 79 pass, 69% overall |
 | 4 | Synthetic HDF5 round-trip: read_gcov returns valid xarray with coords + CRS | ✅ Pass |
 | 5 | `percentile_stretch()` output ∈ [0,1]; `to_uint8()` dtype uint8 range [0,255] | ✅ Pass |
@@ -305,13 +305,13 @@ Bugs discovered and fixed during implementation:
 
 ## Next Steps
 
-### Immediate (complete Milestones 1–2)
-1. **Run mypy** on the full codebase and fix any type errors (Verification #2)
-2. **Create notebook 02** (`read_gcov.ipynb`) — complete Milestone 1
-3. **Create notebook 04** (`rgb_composites.ipynb`) — complete Milestone 1
-4. **Add mock-based search tests** (`test_search/test_asf.py`) — complete Milestone 2 tests
-5. **Create notebook 01** (`search_and_download.ipynb`)
-6. **Create notebook 03** (`preprocessing.ipynb`)
+### Immediate (complete Milestones 1–2) — ✅ ALL DONE
+1. ~~**Run mypy** on the full codebase and fix any type errors (Verification #2)~~ ✅
+2. ~~**Create notebook 02** (`read_gcov.ipynb`) — complete Milestone 1~~ ✅
+3. ~~**Create notebook 04** (`rgb_composites.ipynb`) — complete Milestone 1~~ ✅
+4. ~~**Add mock-based search tests** (`test_search/test_asf.py`) — complete Milestone 2 tests~~ ✅
+5. ~~**Create notebook 01** (`search_and_download.ipynb`)~~ ✅
+6. ~~**Create notebook 03** (`preprocessing.ipynb`)~~ ✅
 
 ### Medium-term (Milestone 3)
 7. **Implement vectorized Freeman-Durden** decomposition in `analysis/decomposition.py`
