@@ -12,6 +12,8 @@ of 3 description strings.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from nice_sar.viz.display import gamma_correct, percentile_stretch, to_uint8
@@ -434,7 +436,7 @@ def make_rgb(
     hh: np.ndarray,
     hv: np.ndarray,
     method: str = "vegetation_green",
-    **kwargs,
+    **kwargs: Any,
 ) -> RGBResult:
     """Generate an RGB composite using a named method.
 
