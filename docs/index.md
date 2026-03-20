@@ -22,10 +22,19 @@ from NASA Earthdata Cloud (AWS S3).
 ## Quick Example
 
 ```python
+import os
+
 import nice_sar
 
 # Authenticate with NASA Earthdata
 nice_sar.auth.login()
+
+if os.environ.get("AWS_DEFAULT_REGION") == "us-west-2":
+  fs = nice_sar.auth.get_s3_filesystem()
+  granule_access = "s3"
+else:
+  fs = nice_sar.auth.get_https_filesystem()
+  granule_access = "https"
 
 # Search for GCOV products
 results = nice_sar.search.search_gcov(
@@ -35,8 +44,8 @@ results = nice_sar.search.search_gcov(
 )
 
 # Open and read as xarray DataArray
-fs = nice_sar.auth.get_s3_filesystem()
-h5 = nice_sar.io.open_nisar(results[0], filesystem=fs)
+granule_url = nice_sar.auth.get_granule_url(results[0], access=granule_access)
+h5 = nice_sar.io.open_nisar(granule_url, filesystem=fs)
 hh = nice_sar.io.read_gcov(h5, frequency="A", polarization="HHHH")
 
 # Preprocess and visualize

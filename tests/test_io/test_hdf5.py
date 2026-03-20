@@ -31,6 +31,10 @@ class TestOpenNisar:
         with pytest.raises(ValueError, match="filesystem"):
             open_nisar("s3://bucket/key.h5")
 
+    def test_s3_path_with_non_s3_filesystem(self) -> None:
+        with pytest.raises(ValueError, match="non-S3 filesystem"):
+            open_nisar("s3://bucket/key.h5", filesystem=object())
+
 
 class TestGetFrequencies:
     """Tests for get_frequencies."""

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import fsspec
 import h5py
 import s3fs
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def open_nisar(
     path: PathType,
-    filesystem: s3fs.S3FileSystem | None = None,
+    filesystem: fsspec.AbstractFileSystem | None = None,
 ) -> h5py.File:
     """Open a NISAR HDF5 file from local disk, S3, or HTTPS.
 
@@ -39,6 +40,17 @@ def open_nisar(
     if path_str.startswith("s3://") or path_str.startswith("https://"):
         if filesystem is None:
             raise ValueError("An authenticated filesystem is required for remote paths.")
+        if path_str.startswith("s3://") and not isinstance(filesystem, s3fs.S3FileSystem):
+            raise ValueError(
+                "Received an s3:// path with a non-S3 filesystem. "
+                "Use get_s3_filesystem() for direct S3 reads in AWS us-west-2, "
+                "or request an HTTPS granule URL when using get_https_filesystem()."
+            )
+        if path_str.startswith("https://") and isinstance(filesystem, s3fs.S3FileSystem):
+            raise ValueError(
+                "Received an https:// path with an S3 filesystem. "
+                "Use get_https_filesystem() for HTTPS streaming."
+            )
         logger.info("Opening NISAR file from remote: %s", path_str)
         f = filesystem.open(path_str, "rb")
         return h5py.File(f, "r")

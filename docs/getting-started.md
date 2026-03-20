@@ -19,10 +19,17 @@ pip install nice-sar
 authentication. On first use it will prompt for your credentials and cache them in `~/.netrc`.
 
 ```python
-from nice_sar.auth import login, get_s3_filesystem
+import os
+
+from nice_sar.auth import get_https_filesystem, get_s3_filesystem, login
 
 login()
-fs = get_s3_filesystem()  # Authenticated S3 filesystem for direct reads
+if os.environ.get("AWS_DEFAULT_REGION") == "us-west-2":
+    fs = get_s3_filesystem()  # Direct S3 reads inside AWS us-west-2
+    granule_access = "s3"
+else:
+    fs = get_https_filesystem()  # HTTPS streaming everywhere else
+    granule_access = "https"
 ```
 
 !!! tip
@@ -50,10 +57,12 @@ print(f"Found {len(results)} granules")
 Open a NISAR HDF5 file and read a polarization layer as a lazy `xarray.DataArray`:
 
 ```python
+from nice_sar.auth import get_granule_url
 from nice_sar.io import open_nisar, read_gcov
 
-h5 = open_nisar(results[0], filesystem=fs)
-hh = read_gcov(h5, frequency="A", polarization="HHHH")
+granule_url = get_granule_url(results[0], access=granule_access)
+h5 = open_nisar(granule_url, filesystem=fs)
+hh = read_gcov(h5, frequency="A", polarization="HH")
 print(hh)  # xarray.DataArray with spatial coords
 ```
 

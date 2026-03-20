@@ -96,3 +96,49 @@ class TestGetHttpsFilesystem:
         result = get_https_filesystem()
         assert result is mock_fs
         mock_ea.get_fsspec_https_session.assert_called_once()
+
+
+class TestGetGranuleUrl:
+    """Tests for get_granule_url()."""
+
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("nice_sar.auth.earthdata.earthaccess")
+    def test_auto_prefers_https_outside_us_west_2(self, mock_ea: MagicMock) -> None:
+        from nice_sar.auth.earthdata import get_granule_url
+
+        granule = MagicMock()
+        mock_ea.results.DataGranule.data_links.side_effect = lambda _granule, access: {
+            "direct": ["s3://bucket/granule.h5"],
+            "external": ["https://example.test/granule.h5"],
+        }[access]
+
+        result = get_granule_url(granule)
+
+        assert result == "https://example.test/granule.h5"
+
+    @patch("nice_sar.auth.earthdata.earthaccess")
+    def test_explicit_s3_prefers_direct_link(self, mock_ea: MagicMock) -> None:
+        from nice_sar.auth.earthdata import get_granule_url
+
+        granule = MagicMock()
+        mock_ea.results.DataGranule.data_links.side_effect = lambda _granule, access: {
+            "direct": ["s3://bucket/granule.h5"],
+            "external": ["https://example.test/granule.h5"],
+        }[access]
+
+        result = get_granule_url(granule, access="s3")
+
+        assert result == "s3://bucket/granule.h5"
+
+    @patch("nice_sar.auth.earthdata.earthaccess")
+    def test_raises_when_requested_scheme_missing(self, mock_ea: MagicMock) -> None:
+        from nice_sar.auth.earthdata import get_granule_url
+
+        granule = MagicMock()
+        mock_ea.results.DataGranule.data_links.side_effect = lambda _granule, access: {
+            "direct": ["s3://bucket/granule.h5"],
+            "external": [],
+        }[access]
+
+        with pytest.raises(ValueError, match="No compatible granule URL found"):
+            get_granule_url(granule, access="https")
