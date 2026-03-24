@@ -16,6 +16,56 @@ from nice_sar._types import BBox
 logger = logging.getLogger(__name__)
 
 
+def get_result_size_bytes(result: object) -> int | float | None:
+    """Extract a granule size in bytes from an ASF search result.
+
+    ASF metadata is not uniform across products. Most products expose a scalar
+    ``bytes`` property, while current NISAR products expose ``bytes`` as a
+    mapping keyed by filename with per-file metadata.
+
+    Args:
+        result: ASF search result object or a properties mapping.
+
+    Returns:
+        Size in bytes for the primary data file, if available.
+    """
+    props = result if isinstance(result, dict) else getattr(result, "properties", None)
+    if not isinstance(props, dict):
+        return None
+
+    size_info = props.get("bytes")
+    if isinstance(size_info, int | float):
+        return size_info
+
+    if not isinstance(size_info, dict):
+        return None
+
+    file_name = props.get("fileName")
+    if isinstance(file_name, str):
+        file_entry = size_info.get(file_name)
+        if isinstance(file_entry, dict):
+            nested_bytes = file_entry.get("bytes")
+            if isinstance(nested_bytes, int | float):
+                return nested_bytes
+        elif isinstance(file_entry, int | float):
+            return file_entry
+
+    nested_bytes = size_info.get("bytes")
+    if isinstance(nested_bytes, int | float):
+        return nested_bytes
+
+    if len(size_info) == 1:
+        only_entry = next(iter(size_info.values()))
+        if isinstance(only_entry, dict):
+            nested_bytes = only_entry.get("bytes")
+            if isinstance(nested_bytes, int | float):
+                return nested_bytes
+        elif isinstance(only_entry, int | float):
+            return only_entry
+
+    return None
+
+
 def search_nisar(
     product_type: str = "GCOV",
     bbox: BBox | None = None,

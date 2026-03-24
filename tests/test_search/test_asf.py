@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from nice_sar.search.asf import search_gcov, search_nisar
+from nice_sar.search.asf import get_result_size_bytes, search_gcov, search_nisar
 from nice_sar.search.earthdata import search_earthdata
 
 # ---------------------------------------------------------------------------
@@ -87,6 +87,38 @@ class TestSearchGcov:
         kwargs = mock_search.call_args.kwargs
         assert kwargs["processingLevel"] == "GCOV"
         assert kwargs["maxResults"] == 5
+
+
+class TestGetResultSizeBytes:
+    """Tests for extracting ASF result file sizes across metadata schemas."""
+
+    def test_returns_scalar_size(self) -> None:
+        result = {"bytes": 123456789}
+        assert get_result_size_bytes(result) == 123456789
+
+    def test_returns_nisar_size_for_matching_filename(self) -> None:
+        result = {
+            "fileName": "granule.h5",
+            "bytes": {"granule.h5": {"bytes": 987654321, "format": "HDF5"}},
+        }
+        assert get_result_size_bytes(result) == 987654321
+
+    def test_returns_nested_scalar_size(self) -> None:
+        result = {"bytes": {"bytes": 42}}
+        assert get_result_size_bytes(result) == 42
+
+    def test_returns_single_entry_size_without_filename(self) -> None:
+        result = {"bytes": {"granule.h5": {"bytes": 314159265}}}
+        assert get_result_size_bytes(result) == 314159265
+
+    def test_returns_none_for_unrecognized_shape(self) -> None:
+        result = {"bytes": {"granule.h5": {"format": "HDF5"}}}
+        assert get_result_size_bytes(result) is None
+
+    def test_accepts_result_object_with_properties(self) -> None:
+        result = MagicMock()
+        result.properties = {"fileName": "granule.h5", "bytes": {"granule.h5": {"bytes": 7}}}
+        assert get_result_size_bytes(result) == 7
 
 
 # ---------------------------------------------------------------------------
