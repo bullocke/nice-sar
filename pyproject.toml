@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nice-sar"
-version = "0.1.1"
+version = "0.1.2"
 description = "NISAR SAR data processing and analysis toolkit"
 readme = "README.md"
 license = "MIT"
