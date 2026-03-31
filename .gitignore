@@ -72,8 +72,19 @@ Plan/
 
 # Random
 .cache/
+notebooks/errors.log
+proposal/
 
 .pre-commit-config.yaml
 
 # Implementation
 Implementation/
+
+# Data
+NISAR_Data/
+
+# Prompts
+.github/prompts/
+
+# NISAR Docs
+docs/nisar-docs/

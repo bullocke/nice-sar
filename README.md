@@ -1,5 +1,8 @@
 # nice-sar
 
+[![Documentation](https://img.shields.io/badge/docs-mkdocs--material-blue)](https://bullocke.github.io/nice-sar)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > **⚠️ Early Development — Not Ready for Production Use**
 >
 > This package is in the early stages of development. APIs are unstable, functionality is incomplete, and nothing has been validated against real NISAR data yet. Use at your own risk and expect breaking changes. Contributions and feedback are welcome.

@@ -79,6 +79,12 @@ def get_frequencies(h5: h5py.File) -> list[str]:
 def get_polarizations(h5: h5py.File, frequency: str = "A") -> list[str]:
     """Get available polarizations for a given frequency.
 
+    Searches across all NISAR product types, including products that use
+    ``grids/`` (GCOV, GSLC, GUNW, GOFF) and ``swaths/`` (RSLC).
+
+    For GUNW and GOFF the polarization list is stored at the frequency level,
+    same as other geocoded products.
+
     Args:
         h5: Open NISAR HDF5 file handle.
         frequency: Frequency label (``"A"`` or ``"B"``).
@@ -86,10 +92,20 @@ def get_polarizations(h5: h5py.File, frequency: str = "A") -> list[str]:
     Returns:
         List of polarization labels (e.g., ``["HH", "HV"]``).
     """
-    for product in ("GCOV", "GSLC", "RSLC"):
+    # Geocoded products under grids/
+    for product in ("GCOV", "GSLC", "GUNW", "GOFF"):
         grid_path = f"/science/LSAR/{product}/grids/frequency{frequency}"
         pol_path = f"{grid_path}/listOfPolarizations"
         if pol_path in h5:
             result: list[str] = h5[pol_path][:].astype(str).tolist()
             return result
+
+    # Radar-geometry products under swaths/
+    for product in ("RSLC",):
+        swath_path = f"/science/LSAR/{product}/swaths/frequency{frequency}"
+        pol_path = f"{swath_path}/listOfPolarizations"
+        if pol_path in h5:
+            result2: list[str] = h5[pol_path][:].astype(str).tolist()
+            return result2
+
     raise KeyError(f"No polarization list found for frequency {frequency}")

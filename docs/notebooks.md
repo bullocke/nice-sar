@@ -43,6 +43,25 @@ Quad-pol decomposition workflow: polarimetric indices (SPAN, RFDI), coherency ma
 Freeman-Durden three-component decomposition, Cloude-Pottier H/A/α, entropy-alpha plane
 visualization, and Pauli RGB.
 
+### 06 — InSAR and Coherence
+
+Interferometric SAR workflows: read GUNW unwrapped-phase and coherence products, convert phase to
+line-of-sight displacement, form interferograms from GSLC pairs, multilook complex data, estimate
+coherence, apply ionospheric correction, and overlay results on interactive Folium maps.
+
+### 07 — Time Series Change Detection
+
+Temporal analysis of GCOV backscatter stacks: build data cubes, compute Coefficient of Variation
+(CoV), run CUSUM change-point detection, apply backscatter thresholding for inundation mapping,
+and fit harmonic models for seasonal baselines.
+
+### 08 — Spatial Subset & Download
+
+Download only the pixels you need: define a bounding box (tuple, GeoJSON, or file), stream just
+those pixels from a remote NISAR HDF5 file, and export as GeoTIFFs. Demonstrates GCOV subsetting,
+visualization of downloaded clips, speckle filtering, RGB composites, alternative bbox formats,
+and CLI usage examples.
+
 ## Running Notebooks
 
 ### Local

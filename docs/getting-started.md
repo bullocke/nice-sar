@@ -116,6 +116,41 @@ Ps, Pd, Pv = freeman_durden(T)
 H, A, alpha = cloude_pottier(T)
 ```
 
+## 7. Subset & Download
+
+Don't need the full scene? Download only the pixels inside a bounding box:
+
+```python
+from nice_sar.io.subset import subset_product
+
+tif_paths = subset_product(
+    source=granule_url,
+    product="GCOV",
+    bbox=(-58.24, 4.40, -58.06, 4.57),  # Guyana AOI
+    frequency="A",
+    polarizations=["HH", "HV"],
+    output_dir="my_subset",
+    filesystem=fs,
+    confirm=False,
+)
+```
+
+The function streams only the required pixels from the remote HDF5 file and exports
+each band as a GeoTIFF. It supports GCOV, GSLC, GUNW, and GOFF products.
+
+The bbox can also be a GeoJSON dict, a GeoJSON file path, or a CSV string — see
+:func:`nice_sar.io.bbox_parser.parse_bbox` for all formats.
+
+A CLI interface is also available:
+
+```bash
+nice-sar subset \
+    --bbox "-58.24,4.40,-58.06,4.57" \
+    --product GCOV \
+    --polarization HH --polarization HV \
+    -o ./my_subset/
+```
+
 ## Next Steps
 
 - See the [Notebooks](notebooks.md) for interactive end-to-end examples

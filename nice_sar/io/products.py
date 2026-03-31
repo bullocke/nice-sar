@@ -1,6 +1,7 @@
 """Product-specific readers for NISAR HDF5 files.
 
 Reads NISAR products into xarray DataArrays with proper coordinates and CRS metadata.
+Supports GCOV, GSLC, GUNW, GOFF, and RSLC products.
 """
 
 from __future__ import annotations
@@ -20,9 +21,13 @@ from nice_sar.io.hdf5 import open_nisar
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
-def read_gcov_metadata(h5_file: h5py.File) -> dict:
-    """Read essential metadata from a GCOV product.
+
+def read_identification(h5_file: h5py.File) -> dict:
+    """Read product-level identification metadata common to all NISAR products.
 
     Args:
         h5_file: Open HDF5 file handle.
@@ -41,19 +46,25 @@ def read_gcov_metadata(h5_file: h5py.File) -> dict:
     }
 
 
-def get_projection_info(
-    h5_file: h5py.File, frequency: str = "A"
+def get_projection_info_l2(
+    h5_file: h5py.File,
+    product: str,
+    frequency: str = "A",
 ) -> tuple[CRS, Affine, np.ndarray, np.ndarray]:
-    """Extract projection and georeferencing information from a GCOV product.
+    """Extract projection and georeferencing from any geocoded L2 product.
+
+    Works for GCOV, GSLC, GUNW, and GOFF — all share the same coordinate
+    structure under ``/science/LSAR/{product}/grids/frequency{A|B}/``.
 
     Args:
         h5_file: Open HDF5 file handle.
+        product: Product type string (e.g., ``"GCOV"``, ``"GUNW"``).
         frequency: Frequency label (``"A"`` or ``"B"``).
 
     Returns:
         Tuple of (CRS, Affine transform, x_coordinates, y_coordinates).
     """
-    grid_path = f"/science/LSAR/GCOV/grids/frequency{frequency}"
+    grid_path = f"/science/LSAR/{product}/grids/frequency{frequency}"
     projection = h5_file[f"{grid_path}/projection"]
     epsg_code = projection.attrs["epsg_code"]
     crs = CRS.from_epsg(int(epsg_code))
@@ -69,6 +80,49 @@ def get_projection_info(
 
     transform = Affine(x_spacing, 0.0, x_origin, 0.0, y_spacing, y_origin)
     return crs, transform, x_coords, y_coords
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases
+# ---------------------------------------------------------------------------
+
+
+def read_gcov_metadata(h5_file: h5py.File) -> dict:
+    """Read essential metadata from a GCOV product.
+
+    This is an alias for :func:`read_identification` kept for backward
+    compatibility.
+
+    Args:
+        h5_file: Open HDF5 file handle.
+
+    Returns:
+        Dictionary with product_type, start_time, end_time, orbit, track, frame.
+    """
+    return read_identification(h5_file)
+
+
+def get_projection_info(
+    h5_file: h5py.File, frequency: str = "A"
+) -> tuple[CRS, Affine, np.ndarray, np.ndarray]:
+    """Extract projection and georeferencing information from a GCOV product.
+
+    This is an alias for ``get_projection_info_l2(h5, "GCOV", frequency)``
+    kept for backward compatibility.
+
+    Args:
+        h5_file: Open HDF5 file handle.
+        frequency: Frequency label (``"A"`` or ``"B"``).
+
+    Returns:
+        Tuple of (CRS, Affine transform, x_coordinates, y_coordinates).
+    """
+    return get_projection_info_l2(h5_file, "GCOV", frequency)
+
+
+# ---------------------------------------------------------------------------
+# GCOV reader
+# ---------------------------------------------------------------------------
 
 
 def read_gcov(
@@ -193,3 +247,375 @@ def read_quad_covariances(h5_file: h5py.File, grid_path: str) -> dict[str, np.nd
             out[k] = val
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# GSLC reader
+# ---------------------------------------------------------------------------
+
+_GSLC_PRODUCT = "GSLC"
+
+
+def read_gslc(
+    source: PathType | h5py.File,
+    frequency: str = "A",
+    polarization: str = "HH",
+    chunks: dict | None = None,
+    filesystem: fsspec.AbstractFileSystem | None = None,
+) -> xr.DataArray:
+    """Read a GSLC polarization band as a lazy complex xarray DataArray.
+
+    GSLC products contain complex Digital Numbers (DN) on a geocoded grid.
+    Phase is flattened for the orbit; amplitude is terrain-corrected but NOT
+    radiometrically flattened. ``beta0 = |DN|²``.
+
+    Args:
+        source: Path to NISAR GSLC HDF5 file or open ``h5py.File``.
+        frequency: Frequency label (``"A"`` or ``"B"``).
+        polarization: Polarization to read (e.g., ``"HH"``, ``"HV"``).
+        chunks: Dask chunk specification. Defaults to ``{"y": 1024, "x": 1024}``.
+        filesystem: Authenticated filesystem for remote paths.
+
+    Returns:
+        Complex-valued ``xarray.DataArray`` backed by dask.
+    """
+    if chunks is None:
+        chunks = {"y": 1024, "x": 1024}
+
+    owns_file = not isinstance(source, h5py.File)
+    if owns_file:
+        h5_file = open_nisar(source, filesystem=filesystem)  # type: ignore[arg-type]
+    else:
+        h5_file = source  # type: ignore[assignment]
+
+    try:
+        crs, transform, x_coords, y_coords = get_projection_info_l2(
+            h5_file, _GSLC_PRODUCT, frequency
+        )
+        grid_path = f"/science/LSAR/{_GSLC_PRODUCT}/grids/frequency{frequency}"
+        dataset = h5_file[f"{grid_path}/{polarization}"]
+        raw = np.asarray(dataset[:], dtype=np.complex64)
+        data = da.from_array(raw, chunks=(chunks["y"], chunks["x"]))
+        metadata = read_identification(h5_file)
+    finally:
+        if owns_file:
+            h5_file.close()
+
+    da_xr = xr.DataArray(
+        data,
+        dims=["y", "x"],
+        coords={"y": y_coords, "x": x_coords},
+        attrs={
+            "crs": str(crs),
+            "transform": tuple(transform),
+            "frequency": frequency,
+            "polarization": polarization,
+            "units": "complex_dn",
+            **metadata,
+        },
+    )
+    logger.info(
+        "Loaded GSLC %s freq%s (%d x %d)",
+        polarization,
+        frequency,
+        len(y_coords),
+        len(x_coords),
+    )
+    return da_xr
+
+
+# ---------------------------------------------------------------------------
+# GUNW reader
+# ---------------------------------------------------------------------------
+
+_GUNW_PRODUCT = "GUNW"
+
+_GUNW_LAYERS = {
+    "unwrappedPhase",
+    "coherenceMagnitude",
+    "wrappedInterferogram",
+    "connectedComponents",
+    "ionospherePhaseScreen",
+    "ionospherePhaseScreenUncertainty",
+}
+
+
+def read_gunw(
+    source: PathType | h5py.File,
+    frequency: str = "A",
+    polarization: str = "HH",
+    layer: str = "unwrappedPhase",
+    chunks: dict | None = None,
+    filesystem: fsspec.AbstractFileSystem | None = None,
+) -> xr.DataArray:
+    """Read a GUNW data layer as a lazy xarray DataArray.
+
+    GUNW products contain geocoded unwrapped interferograms at 80 m posting.
+    Only co-polarized (HH or VV) nearest-neighbor 12-day pairs are generated
+    by the NISAR mission.
+
+    The ionospheric phase screen is provided but **not applied by default**.
+
+    Args:
+        source: Path to NISAR GUNW HDF5 file or open ``h5py.File``.
+        frequency: Frequency label (``"A"`` or ``"B"``).
+        polarization: Co-polarization to read (``"HH"`` or ``"VV"``).
+        layer: Dataset to read. One of ``"unwrappedPhase"``,
+            ``"coherenceMagnitude"``, ``"wrappedInterferogram"``,
+            ``"connectedComponents"``, ``"ionospherePhaseScreen"``,
+            ``"ionospherePhaseScreenUncertainty"``.
+        chunks: Dask chunk specification. Defaults to ``{"y": 1024, "x": 1024}``.
+        filesystem: Authenticated filesystem for remote paths.
+
+    Returns:
+        ``xarray.DataArray`` backed by dask with y/x coordinates and CRS metadata.
+
+    Raises:
+        ValueError: If *layer* is not a recognized GUNW dataset name.
+    """
+    if layer not in _GUNW_LAYERS:
+        raise ValueError(
+            f"Unknown GUNW layer {layer!r}. Choose from: {sorted(_GUNW_LAYERS)}"
+        )
+
+    if chunks is None:
+        chunks = {"y": 1024, "x": 1024}
+
+    owns_file = not isinstance(source, h5py.File)
+    if owns_file:
+        h5_file = open_nisar(source, filesystem=filesystem)  # type: ignore[arg-type]
+    else:
+        h5_file = source  # type: ignore[assignment]
+
+    try:
+        crs, transform, x_coords, y_coords = get_projection_info_l2(
+            h5_file, _GUNW_PRODUCT, frequency
+        )
+        ifg_path = (
+            f"/science/LSAR/{_GUNW_PRODUCT}/grids/frequency{frequency}"
+            f"/interferogram/{polarization}/{layer}"
+        )
+        dataset = h5_file[ifg_path]
+
+        if layer == "wrappedInterferogram":
+            raw = np.asarray(dataset[:], dtype=np.complex64)
+        elif layer == "connectedComponents":
+            raw = np.asarray(dataset[:], dtype=np.uint32)
+        else:
+            raw = np.asarray(dataset[:], dtype=np.float32)
+
+        data = da.from_array(raw, chunks=(chunks["y"], chunks["x"]))
+        metadata = read_identification(h5_file)
+    finally:
+        if owns_file:
+            h5_file.close()
+
+    units_map = {
+        "unwrappedPhase": "radians",
+        "coherenceMagnitude": "unitless",
+        "wrappedInterferogram": "complex_phase",
+        "connectedComponents": "label",
+        "ionospherePhaseScreen": "radians",
+        "ionospherePhaseScreenUncertainty": "radians",
+    }
+
+    da_xr = xr.DataArray(
+        data,
+        dims=["y", "x"],
+        coords={"y": y_coords, "x": x_coords},
+        attrs={
+            "crs": str(crs),
+            "transform": tuple(transform),
+            "frequency": frequency,
+            "polarization": polarization,
+            "layer": layer,
+            "units": units_map.get(layer, "unknown"),
+            **metadata,
+        },
+    )
+    logger.info(
+        "Loaded GUNW %s/%s freq%s (%d x %d)",
+        polarization,
+        layer,
+        frequency,
+        len(y_coords),
+        len(x_coords),
+    )
+    return da_xr
+
+
+# ---------------------------------------------------------------------------
+# GOFF reader
+# ---------------------------------------------------------------------------
+
+_GOFF_PRODUCT = "GOFF"
+
+_GOFF_LAYERS = {"alongTrackOffset", "slantRangeOffset", "snr"}
+
+
+def read_goff(
+    source: PathType | h5py.File,
+    frequency: str = "A",
+    polarization: str = "HH",
+    layer: str = "alongTrackOffset",
+    chunks: dict | None = None,
+    filesystem: fsspec.AbstractFileSystem | None = None,
+) -> xr.DataArray:
+    """Read a GOFF pixel-offset layer as a lazy xarray DataArray.
+
+    GOFF products contain geocoded pixel offsets at 80 m posting derived from
+    cross-correlation of RSLC pairs. Layers may contain outliers — no
+    post-processing is applied by the NISAR SDS.
+
+    Args:
+        source: Path to NISAR GOFF HDF5 file or open ``h5py.File``.
+        frequency: Frequency label (``"A"`` or ``"B"``).
+        polarization: Polarization to read (e.g., ``"HH"``).
+        layer: Dataset to read. One of ``"alongTrackOffset"``,
+            ``"slantRangeOffset"``, ``"snr"``.
+        chunks: Dask chunk specification. Defaults to ``{"y": 1024, "x": 1024}``.
+        filesystem: Authenticated filesystem for remote paths.
+
+    Returns:
+        ``xarray.DataArray`` backed by dask.
+
+    Raises:
+        ValueError: If *layer* is not a recognized GOFF dataset name.
+    """
+    if layer not in _GOFF_LAYERS:
+        raise ValueError(
+            f"Unknown GOFF layer {layer!r}. Choose from: {sorted(_GOFF_LAYERS)}"
+        )
+
+    if chunks is None:
+        chunks = {"y": 1024, "x": 1024}
+
+    owns_file = not isinstance(source, h5py.File)
+    if owns_file:
+        h5_file = open_nisar(source, filesystem=filesystem)  # type: ignore[arg-type]
+    else:
+        h5_file = source  # type: ignore[assignment]
+
+    try:
+        crs, transform, x_coords, y_coords = get_projection_info_l2(
+            h5_file, _GOFF_PRODUCT, frequency
+        )
+        off_path = (
+            f"/science/LSAR/{_GOFF_PRODUCT}/grids/frequency{frequency}"
+            f"/pixelOffsets/{polarization}/{layer}"
+        )
+        dataset = h5_file[off_path]
+        raw = np.asarray(dataset[:], dtype=np.float32)
+        data = da.from_array(raw, chunks=(chunks["y"], chunks["x"]))
+        metadata = read_identification(h5_file)
+    finally:
+        if owns_file:
+            h5_file.close()
+
+    units_map = {
+        "alongTrackOffset": "pixels",
+        "slantRangeOffset": "pixels",
+        "snr": "ratio",
+    }
+
+    da_xr = xr.DataArray(
+        data,
+        dims=["y", "x"],
+        coords={"y": y_coords, "x": x_coords},
+        attrs={
+            "crs": str(crs),
+            "transform": tuple(transform),
+            "frequency": frequency,
+            "polarization": polarization,
+            "layer": layer,
+            "units": units_map.get(layer, "unknown"),
+            **metadata,
+        },
+    )
+    logger.info(
+        "Loaded GOFF %s/%s freq%s (%d x %d)",
+        polarization,
+        layer,
+        frequency,
+        len(y_coords),
+        len(x_coords),
+    )
+    return da_xr
+
+
+# ---------------------------------------------------------------------------
+# RSLC reader
+# ---------------------------------------------------------------------------
+
+_RSLC_PRODUCT = "RSLC"
+
+
+def read_rslc(
+    source: PathType | h5py.File,
+    frequency: str = "A",
+    polarization: str = "HH",
+    chunks: dict | None = None,
+    filesystem: fsspec.AbstractFileSystem | None = None,
+) -> xr.DataArray:
+    """Read an RSLC polarization band as a lazy complex xarray DataArray.
+
+    RSLC products are in zero-Doppler range-Doppler geometry (NOT geocoded).
+    Complex backscatter values are Digital Numbers with LUTs for radiometric
+    calibration. For standard analysis, prefer geocoded products (GCOV/GSLC).
+
+    Args:
+        source: Path to NISAR RSLC HDF5 file or open ``h5py.File``.
+        frequency: Frequency label (``"A"`` or ``"B"``).
+        polarization: Polarization to read (e.g., ``"HH"``, ``"HV"``).
+        chunks: Dask chunk specification. Defaults to
+            ``{"azimuth": 1024, "range": 1024}``.
+        filesystem: Authenticated filesystem for remote paths.
+
+    Returns:
+        Complex-valued ``xarray.DataArray`` with azimuth/range dimensions.
+    """
+    if chunks is None:
+        chunks = {"azimuth": 1024, "range": 1024}
+
+    owns_file = not isinstance(source, h5py.File)
+    if owns_file:
+        h5_file = open_nisar(source, filesystem=filesystem)  # type: ignore[arg-type]
+    else:
+        h5_file = source  # type: ignore[assignment]
+
+    try:
+        swath_path = f"/science/LSAR/{_RSLC_PRODUCT}/swaths/frequency{frequency}"
+        dataset = h5_file[f"{swath_path}/{polarization}"]
+        raw = np.asarray(dataset[:], dtype=np.complex64)
+
+        slant_range = h5_file[f"{swath_path}/slantRange"][:]
+        azimuth_time = h5_file[f"{swath_path}/zeroDopplerTime"][:]
+
+        data = da.from_array(raw, chunks=(chunks["azimuth"], chunks["range"]))
+        metadata = read_identification(h5_file)
+    finally:
+        if owns_file:
+            h5_file.close()
+
+    da_xr = xr.DataArray(
+        data,
+        dims=["azimuth", "range"],
+        coords={
+            "azimuth": azimuth_time,
+            "range": slant_range,
+        },
+        attrs={
+            "frequency": frequency,
+            "polarization": polarization,
+            "units": "complex_dn",
+            **metadata,
+        },
+    )
+    logger.info(
+        "Loaded RSLC %s freq%s (%d x %d)",
+        polarization,
+        frequency,
+        len(azimuth_time),
+        len(slant_range),
+    )
+    return da_xr

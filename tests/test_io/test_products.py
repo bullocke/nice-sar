@@ -1,4 +1,4 @@
-"""Integration tests for nice_sar.io.products using a synthetic GCOV HDF5 file."""
+"""Integration tests for nice_sar.io.products using synthetic NISAR HDF5 files."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 import dask.array as da
 import h5py
 import numpy as np
+import pytest
 import xarray as xr
 from pyproj import CRS
 from rasterio.transform import Affine
@@ -15,7 +16,12 @@ from nice_sar.io.products import (
     get_projection_info,
     read_gcov,
     read_gcov_metadata,
+    read_goff,
+    read_gslc,
+    read_gunw,
+    read_identification,
     read_quad_covariances,
+    read_rslc,
 )
 
 
@@ -143,3 +149,238 @@ class TestReadQuadCovariances:
             cov = read_quad_covariances(h5, grid)
         for arr in cov.values():
             assert arr.shape == (64, 64)
+
+
+# ---------------------------------------------------------------------------
+# read_identification (shared helper)
+# ---------------------------------------------------------------------------
+
+
+class TestReadIdentification:
+    """Tests for the universal read_identification helper."""
+
+    def test_gcov(self, synthetic_gcov_path: Path) -> None:
+        with h5py.File(synthetic_gcov_path, "r") as h5:
+            meta = read_identification(h5)
+        assert meta["product_type"] == "GCOV"
+
+    def test_gunw(self, synthetic_gunw_path: Path) -> None:
+        with h5py.File(synthetic_gunw_path, "r") as h5:
+            meta = read_identification(h5)
+        assert meta["product_type"] == "GUNW"
+
+    def test_gslc(self, synthetic_gslc_path: Path) -> None:
+        with h5py.File(synthetic_gslc_path, "r") as h5:
+            meta = read_identification(h5)
+        assert meta["product_type"] == "GSLC"
+
+    def test_rslc(self, synthetic_rslc_path: Path) -> None:
+        with h5py.File(synthetic_rslc_path, "r") as h5:
+            meta = read_identification(h5)
+        assert meta["product_type"] == "RSLC"
+
+
+# ---------------------------------------------------------------------------
+# GSLC reader
+# ---------------------------------------------------------------------------
+
+
+class TestReadGslc:
+    """Tests for read_gslc."""
+
+    def test_returns_dataarray(self, synthetic_gslc_path: Path) -> None:
+        da_xr = read_gslc(synthetic_gslc_path, polarization="HH")
+        assert isinstance(da_xr, xr.DataArray)
+
+    def test_shape(self, synthetic_gslc_path: Path) -> None:
+        da_xr = read_gslc(synthetic_gslc_path, polarization="HH")
+        assert da_xr.shape == (64, 64)
+
+    def test_complex_dtype(self, synthetic_gslc_path: Path) -> None:
+        da_xr = read_gslc(synthetic_gslc_path, polarization="HH")
+        assert np.iscomplexobj(da_xr.values)
+
+    def test_dask_backed(self, synthetic_gslc_path: Path) -> None:
+        da_xr = read_gslc(synthetic_gslc_path, polarization="HH")
+        assert isinstance(da_xr.data, da.Array)
+
+    def test_coordinates(self, synthetic_gslc_path: Path) -> None:
+        da_xr = read_gslc(synthetic_gslc_path, polarization="HH")
+        assert "x" in da_xr.coords
+        assert "y" in da_xr.coords
+
+    def test_attrs(self, synthetic_gslc_path: Path) -> None:
+        da_xr = read_gslc(synthetic_gslc_path, polarization="HH")
+        assert da_xr.attrs["product_type"] == "GSLC"
+        assert da_xr.attrs["polarization"] == "HH"
+        assert da_xr.attrs["units"] == "complex_dn"
+
+    def test_hv_pol(self, synthetic_gslc_path: Path) -> None:
+        da_xr = read_gslc(synthetic_gslc_path, polarization="HV")
+        assert da_xr.shape == (64, 64)
+
+    def test_accepts_h5py_file(self, synthetic_gslc_path: Path) -> None:
+        with h5py.File(synthetic_gslc_path, "r") as h5:
+            da_xr = read_gslc(h5, polarization="HH")
+        assert da_xr.shape == (64, 64)
+
+
+# ---------------------------------------------------------------------------
+# GUNW reader
+# ---------------------------------------------------------------------------
+
+
+class TestReadGunw:
+    """Tests for read_gunw."""
+
+    def test_returns_dataarray(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
+        assert isinstance(da_xr, xr.DataArray)
+
+    def test_shape(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
+        assert da_xr.shape == (64, 64)
+
+    def test_default_layer(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
+        assert da_xr.attrs["layer"] == "unwrappedPhase"
+        assert da_xr.attrs["units"] == "radians"
+
+    def test_coherence_layer(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(
+            synthetic_gunw_path, polarization="HH", layer="coherenceMagnitude"
+        )
+        assert da_xr.attrs["units"] == "unitless"
+        vals = da_xr.values
+        assert np.all(vals >= 0) and np.all(vals <= 1)
+
+    def test_wrapped_interferogram_complex(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(
+            synthetic_gunw_path, polarization="HH", layer="wrappedInterferogram"
+        )
+        assert np.iscomplexobj(da_xr.values)
+
+    def test_connected_components_uint(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(
+            synthetic_gunw_path, polarization="HH", layer="connectedComponents"
+        )
+        assert da_xr.values.dtype == np.uint32
+
+    def test_invalid_layer_raises(self, synthetic_gunw_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unknown GUNW layer"):
+            read_gunw(synthetic_gunw_path, polarization="HH", layer="bogus")
+
+    def test_dask_backed(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
+        assert isinstance(da_xr.data, da.Array)
+
+    def test_coordinates(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
+        assert "x" in da_xr.coords and "y" in da_xr.coords
+
+    def test_accepts_h5py_file(self, synthetic_gunw_path: Path) -> None:
+        with h5py.File(synthetic_gunw_path, "r") as h5:
+            da_xr = read_gunw(h5, polarization="HH")
+        assert da_xr.shape == (64, 64)
+
+
+# ---------------------------------------------------------------------------
+# GOFF reader
+# ---------------------------------------------------------------------------
+
+
+class TestReadGoff:
+    """Tests for read_goff."""
+
+    def test_returns_dataarray(self, synthetic_goff_path: Path) -> None:
+        da_xr = read_goff(synthetic_goff_path, polarization="HH")
+        assert isinstance(da_xr, xr.DataArray)
+
+    def test_shape(self, synthetic_goff_path: Path) -> None:
+        da_xr = read_goff(synthetic_goff_path, polarization="HH")
+        assert da_xr.shape == (64, 64)
+
+    def test_default_layer(self, synthetic_goff_path: Path) -> None:
+        da_xr = read_goff(synthetic_goff_path, polarization="HH")
+        assert da_xr.attrs["layer"] == "alongTrackOffset"
+        assert da_xr.attrs["units"] == "pixels"
+
+    def test_slant_range_layer(self, synthetic_goff_path: Path) -> None:
+        da_xr = read_goff(
+            synthetic_goff_path, polarization="HH", layer="slantRangeOffset"
+        )
+        assert da_xr.attrs["layer"] == "slantRangeOffset"
+
+    def test_snr_layer(self, synthetic_goff_path: Path) -> None:
+        da_xr = read_goff(synthetic_goff_path, polarization="HH", layer="snr")
+        assert da_xr.attrs["units"] == "ratio"
+        assert np.all(da_xr.values > 0)
+
+    def test_invalid_layer_raises(self, synthetic_goff_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unknown GOFF layer"):
+            read_goff(synthetic_goff_path, polarization="HH", layer="bogus")
+
+    def test_dask_backed(self, synthetic_goff_path: Path) -> None:
+        da_xr = read_goff(synthetic_goff_path, polarization="HH")
+        assert isinstance(da_xr.data, da.Array)
+
+    def test_coordinates(self, synthetic_goff_path: Path) -> None:
+        da_xr = read_goff(synthetic_goff_path, polarization="HH")
+        assert "x" in da_xr.coords and "y" in da_xr.coords
+
+    def test_accepts_h5py_file(self, synthetic_goff_path: Path) -> None:
+        with h5py.File(synthetic_goff_path, "r") as h5:
+            da_xr = read_goff(h5, polarization="HH")
+        assert da_xr.shape == (64, 64)
+
+
+# ---------------------------------------------------------------------------
+# RSLC reader
+# ---------------------------------------------------------------------------
+
+
+class TestReadRslc:
+    """Tests for read_rslc."""
+
+    def test_returns_dataarray(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert isinstance(da_xr, xr.DataArray)
+
+    def test_shape(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert da_xr.shape == (64, 64)
+
+    def test_complex_dtype(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert np.iscomplexobj(da_xr.values)
+
+    def test_radar_geometry_dims(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert da_xr.dims == ("azimuth", "range")
+
+    def test_has_slant_range_coord(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert "range" in da_xr.coords
+        assert len(da_xr.coords["range"]) == 64
+
+    def test_has_azimuth_coord(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert "azimuth" in da_xr.coords
+        assert len(da_xr.coords["azimuth"]) == 64
+
+    def test_no_crs_attr(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert "crs" not in da_xr.attrs
+
+    def test_dask_backed(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HH")
+        assert isinstance(da_xr.data, da.Array)
+
+    def test_hv_pol(self, synthetic_rslc_path: Path) -> None:
+        da_xr = read_rslc(synthetic_rslc_path, polarization="HV")
+        assert da_xr.shape == (64, 64)
+
+    def test_accepts_h5py_file(self, synthetic_rslc_path: Path) -> None:
+        with h5py.File(synthetic_rslc_path, "r") as h5:
+            da_xr = read_rslc(h5, polarization="HH")
+        assert da_xr.shape == (64, 64)

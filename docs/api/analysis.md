@@ -1,6 +1,6 @@
 # Analysis
 
-Polarimetric decompositions, indices, and SAR analysis.
+Polarimetric decompositions, indices, InSAR, time series, and SAR analysis.
 
 ## Polarimetry
 
@@ -9,3 +9,11 @@ Polarimetric decompositions, indices, and SAR analysis.
 ## Decomposition
 
 ::: nice_sar.analysis.decomposition
+
+## InSAR
+
+::: nice_sar.analysis.insar
+
+## Time Series
+
+::: nice_sar.analysis.timeseries

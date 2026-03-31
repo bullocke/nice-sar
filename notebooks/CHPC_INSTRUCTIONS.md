@@ -8,18 +8,13 @@ Follow these steps to run the [nice-sar notebooks](https://github.com/bullocke/n
 Run these commands in a CHPC terminal (via [Shell Access](https://www.chpc.utah.edu/documentation/software/ondemand.php#shell-access)) to create your persistent `nisar` environment.
 
 ```bash
-# Load your local environment manager
-module use $HOME/MyModules
-module load miniforge3/latest
-
 # Clone the repository
 git clone [https://github.com/bullocke/nice-sar.git](https://github.com/bullocke/nice-sar.git)
 cd nice-sar
 
-# Create the environment (includes jupyter/ipykernel for OnDemand compatibility)
+# Create the environment (includes notebook + ipykernel for OnDemand compatibility)
 conda env create -n nisar -f environment.yml
 conda activate nisar
-conda install ipykernel
 
 # Install the nice-sar package in editable mode
 pip install -e .
@@ -33,12 +28,10 @@ pip install -e .
 3.  **Jupyter Python version:** Select **Custom (Environment Setup below)**.
 4.  **Environment Setup for Custom Python:** Paste the following block (**Note:** I set up my environment using `conda` and in a way that requires loading the 2 modules first, then activating the environment. You may have a different setup, so adjust as needed):
     ```bash
-    module use $HOME/MyModules
-    module load miniforge3/latest
     conda activate nisar
     cd ~/nice-sar
     ```
-5.  **Cluster:** Select **notchpeak**.
+5.  **Cluster:** Select what is available for you.
 6.  **Account, partition, qos:** Select your lab's high-compute allocation, if available.
 7.  **Resources:** Set your preferred **Cores** and **Hours**, then click **Launch**.
 

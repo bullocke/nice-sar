@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nice-sar"
-version = "0.1.2"
+version = "0.2.0"
 description = "NISAR SAR data processing and analysis toolkit"
 readme = "README.md"
 license = "MIT"
@@ -73,6 +73,9 @@ dev = [
 Homepage = "https://github.com/bullocke/nice-sar"
 Repository = "https://github.com/bullocke/nice-sar"
 Issues = "https://github.com/bullocke/nice-sar/issues"
+
+[project.scripts]
+nice-sar = "nice_sar.cli:main"
 
 [tool.ruff]
 line-length = 100

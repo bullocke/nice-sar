@@ -20,6 +20,9 @@ dependencies:
   - fsspec
   # Visualization
   - matplotlib
+  # Jupyter (required for CHPC OnDemand)
+  - notebook
+  - ipykernel
   # Dev tools
   - pre-commit
   - ruff

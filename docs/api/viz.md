@@ -1,6 +1,6 @@
 # Visualization
 
-Display utilities and RGB composite generation.
+Display utilities, RGB composite generation, and interactive mapping.
 
 ## Display Utilities
 
@@ -9,3 +9,7 @@ Display utilities and RGB composite generation.
 ## RGB Composites
 
 ::: nice_sar.viz.rgb
+
+## Interactive Mapping
+
+::: nice_sar.viz.mapping

@@ -12,6 +12,10 @@ import numpy as np
 import pytest
 
 from tests.fixtures.create_synthetic_gcov import create_synthetic_gcov
+from tests.fixtures.create_synthetic_goff import create_synthetic_goff
+from tests.fixtures.create_synthetic_gslc import create_synthetic_gslc
+from tests.fixtures.create_synthetic_gunw import create_synthetic_gunw
+from tests.fixtures.create_synthetic_rslc import create_synthetic_rslc
 
 
 @pytest.fixture(scope="session")
@@ -19,6 +23,34 @@ def synthetic_gcov_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Generate a synthetic NISAR GCOV HDF5 file, shared across all tests."""
     path = tmp_path_factory.mktemp("fixtures") / "synthetic_gcov.h5"
     return create_synthetic_gcov(path)
+
+
+@pytest.fixture(scope="session")
+def synthetic_gunw_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Generate a synthetic NISAR GUNW HDF5 file, shared across all tests."""
+    path = tmp_path_factory.mktemp("fixtures") / "synthetic_gunw.h5"
+    return create_synthetic_gunw(path)
+
+
+@pytest.fixture(scope="session")
+def synthetic_gslc_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Generate a synthetic NISAR GSLC HDF5 file, shared across all tests."""
+    path = tmp_path_factory.mktemp("fixtures") / "synthetic_gslc.h5"
+    return create_synthetic_gslc(path)
+
+
+@pytest.fixture(scope="session")
+def synthetic_goff_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Generate a synthetic NISAR GOFF HDF5 file, shared across all tests."""
+    path = tmp_path_factory.mktemp("fixtures") / "synthetic_goff.h5"
+    return create_synthetic_goff(path)
+
+
+@pytest.fixture(scope="session")
+def synthetic_rslc_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Generate a synthetic NISAR RSLC HDF5 file, shared across all tests."""
+    path = tmp_path_factory.mktemp("fixtures") / "synthetic_rslc.h5"
+    return create_synthetic_rslc(path)
 
 
 @pytest.fixture()
