@@ -2,6 +2,10 @@
 
 Provides functions to download NISAR granules from the Alaska Satellite Facility
 using ``asf_search`` and ``earthaccess`` for authentication.
+Public functions:
+
+- :func:`download_url` — Download a single granule file by direct URL
+- :func:`download_granules` — Batch-download a list of ``asf_search`` results
 """
 
 from __future__ import annotations

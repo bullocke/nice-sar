@@ -1,7 +1,14 @@
 """Polarimetric indices and parameters for SAR analysis.
 
-Computes derived polarimetric quantities from backscatter measurements
-including SPAN, RFDI, volume proxy, and multi-polarimetric indices.
+Computes derived polarimetric quantities from backscatter measurements.
+Public functions:
+
+- :func:`compute_span` — Total power (SPAN) from available polarizations
+- :func:`compute_rfdi` — Radar Forest Degradation Index (HH/HV ratio-based)
+- :func:`volume_proxy` — Volume scattering proxy from HH and HV
+- :func:`compute_indices` — Compute all available indices at once, returns dict
+
+All functions accept 2-D numpy arrays in linear power units.
 """
 
 from __future__ import annotations

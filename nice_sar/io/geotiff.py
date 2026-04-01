@@ -1,6 +1,12 @@
-"""GeoTIFF export utilities.
+"""GeoTIFF export and inspection utilities.
 
-Write numpy arrays and RGB composites to GeoTIFF format with metadata sidecars.
+Write numpy arrays and RGB composites to GeoTIFF format with metadata sidecars,
+and read existing GeoTIFFs back into numpy arrays.
+Public functions:
+
+- :func:`export_geotiff` — Write a single-band float GeoTIFF with optional JSON sidecar
+- :func:`write_rgb_geotiff_uint8` — Write a 3-band uint8 RGB GeoTIFF with per-band stretch
+- :func:`read_geotiff` — Read a GeoTIFF into a numpy array with CRS/transform metadata
 """
 
 from __future__ import annotations

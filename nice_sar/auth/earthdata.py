@@ -2,6 +2,12 @@
 
 Wraps ``earthaccess`` to provide a consistent authentication interface
 and authenticated S3 filesystem for cloud-native data access.
+Public functions:
+
+- :func:`login` — Authenticate with NASA Earthdata (interactive or .netrc)
+- :func:`get_s3_filesystem` — Return an authenticated ``s3fs.S3FileSystem`` for direct S3 access
+- :func:`get_https_filesystem` — Return an authenticated fsspec filesystem for HTTPS access
+- :func:`get_granule_url` — Resolve the preferred access URL for a granule result
 """
 
 from __future__ import annotations

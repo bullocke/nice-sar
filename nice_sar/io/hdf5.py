@@ -1,6 +1,11 @@
 """Core HDF5 reader for NISAR products.
 
 Provides transparent access to local, S3-hosted, and HTTPS-streamed NISAR HDF5 files.
+Public functions:
+
+- :func:`open_nisar` — Open a NISAR HDF5 file from a local path, S3 URI, or HTTPS URL
+- :func:`get_frequencies` — List available frequency bands (``"A"``, ``"B"``)
+- :func:`get_polarizations` — List available polarizations for a given frequency
 """
 
 from __future__ import annotations

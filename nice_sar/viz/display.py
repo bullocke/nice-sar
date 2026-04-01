@@ -2,6 +2,11 @@
 
 Provides normalization, stretching, and conversion functions used
 across all visualization modules.
+Public functions:
+
+- :func:`percentile_stretch` — Clip and rescale an array to [0, 1] by percentile bounds
+- :func:`gamma_correct` — Apply power-law gamma correction
+- :func:`to_uint8` — Convert a float [0, 1] array to uint8 [0, 255]
 """
 
 from __future__ import annotations

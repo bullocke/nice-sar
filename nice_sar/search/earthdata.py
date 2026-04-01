@@ -1,6 +1,10 @@
 """NASA Earthdata search via earthaccess.
 
-Wraps ``earthaccess.search_data`` for NISAR data discovery.
+Wraps ``earthaccess.search_data`` for NISAR data discovery by bounding box,
+date range, and short name.
+Public functions:
+
+- :func:`search_earthdata` — Search NASA CMR for NISAR granules using earthaccess
 """
 
 from __future__ import annotations

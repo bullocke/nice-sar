@@ -2,6 +2,11 @@
 
 Provides convenience wrappers around ``asf_search`` for discovering
 NISAR products by AOI, date range, and product type.
+Public functions:
+
+- :func:`search_nisar` — Search for any NISAR product type by AOI, date range, and beam mode
+- :func:`search_gcov` — Convenience wrapper for GCOV-specific searches
+- :func:`get_result_size_bytes` — Extract file size in bytes from an ASF search result
 """
 
 from __future__ import annotations
