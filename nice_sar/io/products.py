@@ -339,22 +339,110 @@ _GUNW_LAYERS = {
     "ionospherePhaseScreenUncertainty",
 }
 
+# Layers stored under /unwrappedInterferogram/ (80 m posting)
+_GUNW_80M_LAYERS = {
+    "unwrappedPhase",
+    "coherenceMagnitude",
+    "connectedComponents",
+    "ionospherePhaseScreen",
+    "ionospherePhaseScreenUncertainty",
+}
+
+# Layers stored under /wrappedInterferogram/ (20 m posting)
+_GUNW_20M_LAYERS = {
+    "wrappedInterferogram",
+    "coherenceMagnitude",
+}
+
+
+def _gunw_group_for_layer(layer: str, posting: int) -> str:
+    """Return the HDF5 group name for a GUNW layer at a given posting.
+
+    Args:
+        layer: Dataset name (e.g. ``"coherenceMagnitude"``).
+        posting: Grid posting in metres (``20`` or ``80``).
+
+    Returns:
+        Group name: ``"unwrappedInterferogram"`` or ``"wrappedInterferogram"``.
+
+    Raises:
+        ValueError: If the layer is not available at the requested posting.
+    """
+    if posting == 20:
+        if layer not in _GUNW_20M_LAYERS:
+            raise ValueError(
+                f"Layer {layer!r} is not available at 20 m posting. "
+                f"Available: {sorted(_GUNW_20M_LAYERS)}"
+            )
+        return "wrappedInterferogram"
+    # 80 m (default)
+    if layer not in _GUNW_80M_LAYERS:
+        if layer in _GUNW_20M_LAYERS:
+            return "wrappedInterferogram"
+        raise ValueError(
+            f"Layer {layer!r} is not available at 80 m posting. "
+            f"Available: {sorted(_GUNW_80M_LAYERS)}"
+        )
+    return "unwrappedInterferogram"
+
+
+def _gunw_projection_info(
+    h5_file: h5py.File,
+    frequency: str,
+    group: str,
+    polarization: str,
+) -> tuple[CRS, Affine, np.ndarray, np.ndarray]:
+    """Read projection info from a GUNW per-polarization subgroup.
+
+    Real GUNW files store coordinates per subgroup (each posting has its own
+    grid), so we read from the polarization-level group rather than a shared
+    top-level coordinate array.
+    """
+    grp_path = (
+        f"/science/LSAR/{_GUNW_PRODUCT}/grids/frequency{frequency}"
+        f"/{group}/{polarization}"
+    )
+    projection = h5_file[f"{grp_path}/projection"]
+    epsg_code = projection.attrs["epsg_code"]
+    crs = CRS.from_epsg(int(epsg_code))
+
+    x_coords = h5_file[f"{grp_path}/xCoordinates"][:]
+    y_coords = h5_file[f"{grp_path}/yCoordinates"][:]
+    x_spacing = h5_file[f"{grp_path}/xCoordinateSpacing"][()]
+    y_spacing = h5_file[f"{grp_path}/yCoordinateSpacing"][()]
+
+    x_origin = x_coords[0] - x_spacing / 2.0
+    y_origin = y_coords[0] - y_spacing / 2.0
+    transform = Affine(x_spacing, 0.0, x_origin, 0.0, y_spacing, y_origin)
+    return crs, transform, x_coords, y_coords
+
 
 def read_gunw(
     source: PathType | h5py.File,
     frequency: str = "A",
     polarization: str = "HH",
     layer: str = "unwrappedPhase",
+    posting: int | None = None,
     chunks: dict | None = None,
     filesystem: fsspec.AbstractFileSystem | None = None,
 ) -> xr.DataArray:
     """Read a GUNW data layer as a lazy xarray DataArray.
 
-    GUNW products contain geocoded unwrapped interferograms at 80 m posting.
-    Only co-polarized (HH or VV) nearest-neighbor 12-day pairs are generated
-    by the NISAR mission.
+    GUNW products contain data at two ground postings:
 
-    The ionospheric phase screen is provided but **not applied by default**.
+    * **80 m** (``unwrappedInterferogram/`` group): ``unwrappedPhase``,
+      ``coherenceMagnitude``, ``connectedComponents``,
+      ``ionospherePhaseScreen``, ``ionospherePhaseScreenUncertainty``.
+    * **20 m** (``wrappedInterferogram/`` group): ``wrappedInterferogram``,
+      ``coherenceMagnitude``.
+
+    When *layer* exists in only one group the correct posting is inferred
+    automatically. For ``coherenceMagnitude`` (present in both), set *posting*
+    to ``20`` or ``80`` explicitly; if omitted it defaults to ``80``.
+
+    Only co-polarized (HH or VV) nearest-neighbor 12-day pairs are generated
+    by the NISAR mission. The ionospheric phase screen is provided but
+    **not applied by default**.
 
     Args:
         source: Path to NISAR GUNW HDF5 file or open ``h5py.File``.
@@ -364,19 +452,33 @@ def read_gunw(
             ``"coherenceMagnitude"``, ``"wrappedInterferogram"``,
             ``"connectedComponents"``, ``"ionospherePhaseScreen"``,
             ``"ionospherePhaseScreenUncertainty"``.
+        posting: Ground posting in metres (``20`` or ``80``). Required only
+            when *layer* is ``"coherenceMagnitude"`` (which exists at both
+            postings). Defaults to ``80`` when not specified.
         chunks: Dask chunk specification. Defaults to ``{"y": 1024, "x": 1024}``.
         filesystem: Authenticated filesystem for remote paths.
 
     Returns:
-        ``xarray.DataArray`` backed by dask with y/x coordinates and CRS metadata.
+        ``xarray.DataArray`` backed by dask with y/x coordinates and CRS
+        metadata. The ``posting`` attribute records the grid posting (20 or 80).
 
     Raises:
-        ValueError: If *layer* is not a recognized GUNW dataset name.
+        ValueError: If *layer* is not a recognized GUNW dataset name, or if
+            the layer is unavailable at the requested posting.
     """
     if layer not in _GUNW_LAYERS:
         raise ValueError(
             f"Unknown GUNW layer {layer!r}. Choose from: {sorted(_GUNW_LAYERS)}"
         )
+
+    if posting is None:
+        posting = 80
+
+    group = _gunw_group_for_layer(layer, posting)
+
+    # Update posting to reflect the actual group when auto-inferred
+    # (e.g. wrappedInterferogram only exists at 20 m)
+    posting = 20 if group == "wrappedInterferogram" else 80
 
     if chunks is None:
         chunks = {"y": 1024, "x": 1024}
@@ -388,19 +490,19 @@ def read_gunw(
         h5_file = source  # type: ignore[assignment]
 
     try:
-        crs, transform, x_coords, y_coords = get_projection_info_l2(
-            h5_file, _GUNW_PRODUCT, frequency
+        crs, transform, x_coords, y_coords = _gunw_projection_info(
+            h5_file, frequency, group, polarization
         )
-        ifg_path = (
+        ds_path = (
             f"/science/LSAR/{_GUNW_PRODUCT}/grids/frequency{frequency}"
-            f"/interferogram/{polarization}/{layer}"
+            f"/{group}/{polarization}/{layer}"
         )
-        dataset = h5_file[ifg_path]
+        dataset = h5_file[ds_path]
 
         if layer == "wrappedInterferogram":
             raw = np.asarray(dataset[:], dtype=np.complex64)
         elif layer == "connectedComponents":
-            raw = np.asarray(dataset[:], dtype=np.uint32)
+            raw = np.asarray(dataset[:], dtype=np.uint16)
         else:
             raw = np.asarray(dataset[:], dtype=np.float32)
 
@@ -429,15 +531,17 @@ def read_gunw(
             "frequency": frequency,
             "polarization": polarization,
             "layer": layer,
+            "posting": posting,
             "units": units_map.get(layer, "unknown"),
             **metadata,
         },
     )
     logger.info(
-        "Loaded GUNW %s/%s freq%s (%d x %d)",
+        "Loaded GUNW %s/%s freq%s posting=%dm (%d x %d)",
         polarization,
         layer,
         frequency,
+        posting,
         len(y_coords),
         len(x_coords),
     )

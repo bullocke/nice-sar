@@ -237,7 +237,7 @@ class TestReadGunw:
         da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
         assert isinstance(da_xr, xr.DataArray)
 
-    def test_shape(self, synthetic_gunw_path: Path) -> None:
+    def test_shape_80m(self, synthetic_gunw_path: Path) -> None:
         da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
         assert da_xr.shape == (64, 64)
 
@@ -245,11 +245,27 @@ class TestReadGunw:
         da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
         assert da_xr.attrs["layer"] == "unwrappedPhase"
         assert da_xr.attrs["units"] == "radians"
+        assert da_xr.attrs["posting"] == 80
 
-    def test_coherence_layer(self, synthetic_gunw_path: Path) -> None:
+    def test_coherence_80m(self, synthetic_gunw_path: Path) -> None:
         da_xr = read_gunw(
             synthetic_gunw_path, polarization="HH", layer="coherenceMagnitude"
         )
+        assert da_xr.shape == (64, 64)
+        assert da_xr.attrs["units"] == "unitless"
+        assert da_xr.attrs["posting"] == 80
+        vals = da_xr.values
+        assert np.all(vals >= 0) and np.all(vals <= 1)
+
+    def test_coherence_20m(self, synthetic_gunw_path: Path) -> None:
+        da_xr = read_gunw(
+            synthetic_gunw_path,
+            polarization="HH",
+            layer="coherenceMagnitude",
+            posting=20,
+        )
+        assert da_xr.shape == (256, 256)
+        assert da_xr.attrs["posting"] == 20
         assert da_xr.attrs["units"] == "unitless"
         vals = da_xr.values
         assert np.all(vals >= 0) and np.all(vals <= 1)
@@ -259,16 +275,27 @@ class TestReadGunw:
             synthetic_gunw_path, polarization="HH", layer="wrappedInterferogram"
         )
         assert np.iscomplexobj(da_xr.values)
+        assert da_xr.shape == (256, 256)
+        assert da_xr.attrs["posting"] == 20
 
     def test_connected_components_uint(self, synthetic_gunw_path: Path) -> None:
         da_xr = read_gunw(
             synthetic_gunw_path, polarization="HH", layer="connectedComponents"
         )
-        assert da_xr.values.dtype == np.uint32
+        assert da_xr.values.dtype == np.uint16
 
     def test_invalid_layer_raises(self, synthetic_gunw_path: Path) -> None:
         with pytest.raises(ValueError, match="Unknown GUNW layer"):
             read_gunw(synthetic_gunw_path, polarization="HH", layer="bogus")
+
+    def test_invalid_posting_raises(self, synthetic_gunw_path: Path) -> None:
+        with pytest.raises(ValueError, match="not available at 20 m"):
+            read_gunw(
+                synthetic_gunw_path,
+                polarization="HH",
+                layer="unwrappedPhase",
+                posting=20,
+            )
 
     def test_dask_backed(self, synthetic_gunw_path: Path) -> None:
         da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
@@ -277,6 +304,18 @@ class TestReadGunw:
     def test_coordinates(self, synthetic_gunw_path: Path) -> None:
         da_xr = read_gunw(synthetic_gunw_path, polarization="HH")
         assert "x" in da_xr.coords and "y" in da_xr.coords
+
+    def test_20m_coordinates_differ(self, synthetic_gunw_path: Path) -> None:
+        da_80 = read_gunw(
+            synthetic_gunw_path, polarization="HH", layer="coherenceMagnitude"
+        )
+        da_20 = read_gunw(
+            synthetic_gunw_path,
+            polarization="HH",
+            layer="coherenceMagnitude",
+            posting=20,
+        )
+        assert len(da_20.coords["x"]) == 4 * len(da_80.coords["x"])
 
     def test_accepts_h5py_file(self, synthetic_gunw_path: Path) -> None:
         with h5py.File(synthetic_gunw_path, "r") as h5:

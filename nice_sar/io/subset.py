@@ -22,7 +22,11 @@ from nice_sar._types import BBox, PathType
 from nice_sar.io.bbox_parser import parse_bbox, validate_bbox
 from nice_sar.io.geotiff import export_geotiff
 from nice_sar.io.hdf5 import open_nisar
-from nice_sar.io.products import get_projection_info_l2, read_identification
+from nice_sar.io.products import (
+    _gunw_projection_info,
+    get_projection_info_l2,
+    read_identification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +46,18 @@ _GUNW_LAYER_DTYPES: dict[str, type] = {
     "unwrappedPhase": np.float32,
     "coherenceMagnitude": np.float32,
     "wrappedInterferogram": np.complex64,
-    "connectedComponents": np.uint32,
+    "connectedComponents": np.uint16,
     "ionospherePhaseScreen": np.float32,
     "ionospherePhaseScreenUncertainty": np.float32,
+}
+
+# GUNW layer → HDF5 group mapping (layers live in different posting groups)
+_GUNW_LAYER_GROUP: dict[str, str] = {
+    "unwrappedPhase": "unwrappedInterferogram",
+    "connectedComponents": "unwrappedInterferogram",
+    "ionospherePhaseScreen": "unwrappedInterferogram",
+    "ionospherePhaseScreenUncertainty": "unwrappedInterferogram",
+    "wrappedInterferogram": "wrappedInterferogram",
 }
 
 # GOFF known layers
@@ -210,7 +223,11 @@ def _get_dataset_paths(
     if product == "GUNW":
         if layers is None:
             layers = ["unwrappedPhase"]
-        return [f"{grid}/interferogram/{polarization}/{lay}" for lay in layers]
+        paths = []
+        for lay in layers:
+            grp = _GUNW_LAYER_GROUP.get(lay, "unwrappedInterferogram")
+            paths.append(f"{grid}/{grp}/{polarization}/{lay}")
+        return paths
 
     if product == "GOFF":
         if layers is None:
@@ -303,9 +320,18 @@ def subset_product(
         granule_name = Path(source_str.split("?")[0]).stem  # strip query params
 
         # 1. Read coordinate metadata (tiny transfer)
-        crs, full_transform, x_coords, y_coords = get_projection_info_l2(
-            h5_file, product, frequency
-        )
+        # GUNW has per-subgroup coordinates; use 80 m (unwrappedInterferogram)
+        # as the reference grid for bbox computation.  Per-layer coordinate
+        # differences are handled during the read step below.
+        if product == "GUNW":
+            ref_pol = polarizations[0] if polarizations else "HH"
+            crs, full_transform, x_coords, y_coords = _gunw_projection_info(
+                h5_file, frequency, "unwrappedInterferogram", ref_pol
+            )
+        else:
+            crs, full_transform, x_coords, y_coords = get_projection_info_l2(
+                h5_file, product, frequency
+            )
 
         # 2. Compute pixel window
         row_slice, col_slice, sub_x, sub_y = bbox_to_pixel_slices(

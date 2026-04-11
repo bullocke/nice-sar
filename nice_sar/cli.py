@@ -224,7 +224,10 @@ def cmd_insar(args: argparse.Namespace) -> None:
         from nice_sar.io.products import read_gunw
 
         coh_xr = read_gunw(
-            args.input, polarization=args.polarization, layer="coherenceMagnitude"
+            args.input,
+            polarization=args.polarization,
+            layer="coherenceMagnitude",
+            posting=args.posting,
         )
         from pyproj import CRS
         from rasterio.transform import Affine
@@ -282,6 +285,77 @@ def cmd_timeseries(args: argparse.Namespace) -> None:
         write_geotiff(args.output, result)
 
     logger.info("Wrote %s result: %s", args.method, args.output)
+
+
+# ---------------------------------------------------------------------------
+# forests
+# ---------------------------------------------------------------------------
+
+
+def cmd_forests(args: argparse.Namespace) -> None:
+    """Forest masking utilities."""
+    from nice_sar.forests import generate_forest_mask, list_forest_mask_methods
+    from nice_sar.io.geotiff import write_geotiff
+
+    if args.subcommand == "list-methods":
+        methods = list_forest_mask_methods(include_unimplemented=args.include_unimplemented)
+        print(json.dumps(methods, indent=2))
+        return
+
+    result = generate_forest_mask(
+        source=args.input,
+        method=args.method,
+        frequency=args.frequency,
+        polarization=args.polarization,
+        units=args.units,
+        threshold_db=args.threshold_db,
+        target=args.target,
+        band=args.band,
+        threshold=args.threshold,
+        mask_values=tuple(args.mask_value) if args.mask_value else None,
+        invert=args.invert,
+        resampling=args.resampling,
+    )
+
+    if hasattr(result.mask, "values"):
+        mask_data = np.asarray(result.mask.values, dtype=np.float32)
+        attrs = result.mask.attrs
+    else:
+        mask_data = np.asarray(result.mask, dtype=np.float32)
+        attrs = {}
+
+    if "crs" not in attrs or "transform" not in attrs:
+        logger.error("Forest mask output is missing georeferencing metadata required for GeoTIFF export.")
+        sys.exit(1)
+
+    from pyproj import CRS
+    from rasterio.transform import Affine
+
+    mask_data = np.where(np.isfinite(mask_data), mask_data.astype(np.float32), np.nan)
+    write_geotiff(
+        args.output,
+        mask_data,
+        crs=CRS.from_user_input(attrs["crs"]),
+        transform=Affine(*attrs["transform"]),
+        description=f"forest_mask:{result.method}",
+    )
+    logger.info("Wrote forest mask: %s", args.output)
+
+    if args.confidence_output and result.confidence is not None:
+        if hasattr(result.confidence, "values"):
+            confidence = np.asarray(result.confidence.values, dtype=np.float32)
+            conf_attrs = result.confidence.attrs
+        else:
+            confidence = np.asarray(result.confidence, dtype=np.float32)
+            conf_attrs = attrs
+        write_geotiff(
+            args.confidence_output,
+            confidence,
+            crs=CRS.from_user_input(conf_attrs["crs"]),
+            transform=Affine(*conf_attrs["transform"]),
+            description=f"forest_mask_confidence:{result.method}",
+        )
+        logger.info("Wrote forest mask confidence: %s", args.confidence_output)
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +495,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_coh.add_argument("input", type=Path, help="GUNW HDF5 file")
     p_coh.add_argument("output", type=Path, help="Output GeoTIFF")
     p_coh.add_argument("--polarization", default="HH")
+    p_coh.add_argument(
+        "--posting",
+        type=int,
+        default=80,
+        choices=[20, 80],
+        help="Grid posting in metres (default: 80)",
+    )
 
     # --- timeseries ---
     p_ts = sub.add_parser("timeseries", help="Time series analysis")
@@ -430,6 +511,71 @@ def build_parser() -> argparse.ArgumentParser:
     p_ts.add_argument("--polarization", default="HH")
     p_ts.add_argument("--method", choices=["cov", "cusum"], default="cov")
     p_ts.add_argument("--threshold", type=float, default=None, help="CUSUM threshold")
+
+    # --- forests ---
+    p_forest = sub.add_parser("forests", help="Forest masking utilities")
+    forest_sub = p_forest.add_subparsers(dest="subcommand", required=True)
+
+    p_forest_list = forest_sub.add_parser("list-methods", help="List available forest mask methods")
+    p_forest_list.add_argument(
+        "--implemented-only",
+        action="store_true",
+        help="Show only implemented methods",
+    )
+
+    p_forest_generate = forest_sub.add_parser("generate", help="Generate a forest mask")
+    p_forest_generate.add_argument("input", type=Path, help="GCOV HDF5 path or external raster path")
+    p_forest_generate.add_argument("output", type=Path, help="Output mask GeoTIFF path")
+    p_forest_generate.add_argument(
+        "--method",
+        default="gcov_hv_threshold",
+        help="Forest mask method identifier",
+    )
+    p_forest_generate.add_argument("--frequency", default="A", help="Frequency (A/B)")
+    p_forest_generate.add_argument("--polarization", default="HV", help="Polarization to read")
+    p_forest_generate.add_argument("--units", default=None, help="Input backscatter units")
+    p_forest_generate.add_argument(
+        "--threshold-db",
+        type=float,
+        default=None,
+        help="Threshold override for GCOV threshold methods",
+    )
+    p_forest_generate.add_argument(
+        "--target",
+        type=Path,
+        default=None,
+        help="Optional target grid for external raster alignment",
+    )
+    p_forest_generate.add_argument("--band", type=int, default=1, help="External raster band")
+    p_forest_generate.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="Threshold for external raster mask generation",
+    )
+    p_forest_generate.add_argument(
+        "--mask-value",
+        type=float,
+        action="append",
+        default=None,
+        help="Discrete external raster values treated as forest (repeatable)",
+    )
+    p_forest_generate.add_argument(
+        "--invert",
+        action="store_true",
+        help="Invert the external raster mask",
+    )
+    p_forest_generate.add_argument(
+        "--resampling",
+        default="nearest",
+        help="Resampling method for external raster alignment",
+    )
+    p_forest_generate.add_argument(
+        "--confidence-output",
+        type=Path,
+        default=None,
+        help="Optional output path for confidence or threshold-margin raster",
+    )
 
     # --- subset ---
     p_sub = sub.add_parser(
@@ -475,6 +621,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip interactive confirmation prompt",
     )
 
+    parser.set_defaults(include_unimplemented=True)
+
     return parser
 
 
@@ -485,6 +633,7 @@ def main(argv: list[str] | None = None) -> None:
     _setup_logging(args.verbose)
 
     dispatch = {
+        "forests": cmd_forests,
         "info": cmd_info,
         "read": cmd_read,
         "multilook": cmd_multilook,
@@ -493,6 +642,8 @@ def main(argv: list[str] | None = None) -> None:
         "timeseries": cmd_timeseries,
         "subset": cmd_subset,
     }
+    if args.command == "forests" and getattr(args, "subcommand", None) == "list-methods":
+        args.include_unimplemented = not args.implemented_only
     dispatch[args.command](args)
 
 
