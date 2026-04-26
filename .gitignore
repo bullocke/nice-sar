@@ -88,3 +88,13 @@ NISAR_Data/
 
 # NISAR Docs
 docs/nisar-docs/
+LIBRARY_REFERENCE.md
+scripts/gen_agent_docs.py
+
+# GEDI/Overlap: ignore large generated artefacts; keep code, AOIs, READMEs, figures
+GEDI/Overlap/outputs/*
+!GEDI/Overlap/outputs/figures/
+GEDI/Overlap/outputs/figures/*.parquet
+GEDI/Overlap/.cache/
+!GEDI/Overlap/data/
+!GEDI/Overlap/data/*.geojson

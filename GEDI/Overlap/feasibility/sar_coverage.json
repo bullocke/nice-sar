@@ -1,0 +1,38 @@
+{
+  "scansar_pre": 41,
+  "scansar_post": 29,
+  "annual_pre": 1,
+  "annual_post": 0,
+  "scansar_sample_meta": [
+    {
+      "BeamID": "W2",
+      "AntennaPointing": "Right",
+      "IncAngleNearRange": 25.857,
+      "IncAngleFarRange": 48.83
+    },
+    {
+      "BeamID": "W2",
+      "AntennaPointing": "Right",
+      "IncAngleNearRange": 25.83,
+      "IncAngleFarRange": 48.726
+    },
+    {
+      "BeamID": "W2",
+      "AntennaPointing": "Right",
+      "IncAngleNearRange": 25.886,
+      "IncAngleFarRange": 48.848
+    },
+    {
+      "BeamID": "W2",
+      "AntennaPointing": "Right",
+      "IncAngleNearRange": 25.848,
+      "IncAngleFarRange": 48.83
+    },
+    {
+      "BeamID": "W2",
+      "AntennaPointing": "Right",
+      "IncAngleNearRange": 25.824,
+      "IncAngleFarRange": 48.726
+    }
+  ]
+}

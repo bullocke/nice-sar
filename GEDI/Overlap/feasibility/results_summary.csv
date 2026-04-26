@@ -1,0 +1,5 @@
+method,installed,latency_s,pairs_10m,pairs_25m,pairs_25m_disturbed,quality_flags,polygon_aoi,returns_points,notes
+GEE shot-level (LARSE/GEDI/GEDI04_A_002 via INDEX),True,559.4,18.0,18.0,18.0,True,True,True,INDEX → per-granule FC merge → disturbance prefilter → self-join
+GEE monthly raster (LARSE/GEDI/GEDI04_A_002_MONTHLY),True,15.4,,326.0,10.0,True,True,False,co-location implicit at 25 m raster grid; no <25 m sensitivity
+earthaccess (CMR granule listing),True,3.8,,,,False,True,False,"granule-level only; per-shot quality requires streaming HDF5; short_name=GEDI_L4A_AGB_Density_V2_1_2056; pre granules=54, post granules=35"
+gedidb (fallback),False,,,,,True,True,True,not attempted: shot-level path succeeded
