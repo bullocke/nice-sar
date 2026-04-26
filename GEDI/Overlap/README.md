@@ -33,6 +33,49 @@ Supplementary panels (`outputs/figures/supplementary_dhh_drfdi.png`) show
 ΔHH (slope 8.2 ± 4.4, R² = 0.015) and ΔRFDI (slope 45 ± 51, R² = 0.003).
 Full statistics in `outputs/figures/fit_stats.json`.
 
+## v2: same-pass + same-path matching
+
+Mixing PALSAR-2 ascending vs descending overpasses and different RSP paths
+across pre and post adds large per-pixel ΔHV and ΔHH variance with no
+biomass signal (different look directions, incidence angles, and speckle
+realizations). The v2 pipeline constrains each pair so that the pre and
+post scenes share the same `PassDirection` and `RSP_Path_Number`.
+
+The matching is symmetric and coordinated server-side:
+[sample_sar_v2.py](sample_sar_v2.py) intersects the
+`(PassDirection, RSP_Path_Number)` keys present in both pre and post
+candidate windows for each pair, then picks the key minimising
+`|pre_dt| + |post_dt|`. Every matched row therefore satisfies
+`pre_PassDirection == post_PassDirection` and
+`pre_RSP_Path_Number == post_RSP_Path_Number` by construction.
+
+![ΔHV vs ΔAGBD (v2)](outputs/figures/v2/delta_hv_vs_delta_agbd_v2.png)
+
+| Metric | v1 (any pass/path) | v2 (same pass+path) |
+|---|---|---|
+| Pairs with both pre+post SAR | 609 | 781 |
+| n after quality filters | 233 | **329** |
+| Slope ± SE (Mg ha⁻¹ dB⁻¹) | +7.4 ± 6.1 | **+12.9 ± 5.4** |
+| R² | 0.006 | **0.017** |
+| p-value | 0.22 | **0.017** |
+
+The v2 ΔHV slope is larger, has smaller SE relative to the slope, and is
+statistically significant at p < 0.05. The binned-median ± IQR overlay
+shows a cleaner monotonic relationship across the ΔHV range. Per-pixel
+scatter remains substantial — expected for a single-frequency,
+single-look L-band sensor with 10–30 m geolocation uncertainty — but the
+v2 result strengthens the proposal narrative: NISAR's denser, dual-pol,
+calibration-stable L-band time series will improve on this baseline both
+by removing the geometric mismatch automatically (every revisit is
+on-orbit) and by reducing per-pixel speckle through multi-look averaging.
+
+Run v2 with the existing `pairs.parquet`:
+
+```bash
+python GEDI/Overlap/sample_sar_v2.py --ee-project dyce-biomass
+python GEDI/Overlap/make_figure_v2.py
+```
+
 ## Data sources
 
 | Source | Asset | Role |
