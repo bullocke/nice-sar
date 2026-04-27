@@ -631,8 +631,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    common_input = dict(type=Path, default=Path("GEDI/Overlap/outputs/pairs_with_sar_v2.parquet"))
-    common_diag = Path("GEDI/Overlap/outputs/diagnostics")
+    common_input = dict(type=Path, default=Path("GEDI/Overlap/outputs/pairs_with_sar_v2c.parquet"))
+    common_diag = Path("GEDI/Overlap/outputs/diagnostics/v2c")
 
     sp = sub.add_parser("select", help="Pick 5 sites and label v2 figure")
     sp.add_argument("--input", **common_input)

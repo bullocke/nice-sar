@@ -97,9 +97,15 @@ GEDI/Overlap/outputs/*
 GEDI/Overlap/outputs/figures/*.parquet
 !GEDI/Overlap/outputs/diagnostics/
 GEDI/Overlap/outputs/diagnostics/chips/
+GEDI/Overlap/outputs/diagnostics/v2c/chips/
 !GEDI/Overlap/outputs/diagnostics/panels/
+!GEDI/Overlap/outputs/diagnostics/v2c/
+!GEDI/Overlap/outputs/diagnostics/v2c/panels/
 !GEDI/Overlap/outputs/diagnostics/v2_figure_labeled.*
+!GEDI/Overlap/outputs/diagnostics/v2c/v2_figure_labeled.*
 !GEDI/Overlap/outputs/diagnostics/chip_sites.parquet
+!GEDI/Overlap/outputs/diagnostics/v2c/chip_sites.parquet
+!GEDI/Overlap/outputs/pairs_with_sar_v2c_audit.csv
 GEDI/Overlap/.cache/
 !GEDI/Overlap/data/
 !GEDI/Overlap/data/*.geojson
