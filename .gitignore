@@ -95,6 +95,11 @@ scripts/gen_agent_docs.py
 GEDI/Overlap/outputs/*
 !GEDI/Overlap/outputs/figures/
 GEDI/Overlap/outputs/figures/*.parquet
+!GEDI/Overlap/outputs/diagnostics/
+GEDI/Overlap/outputs/diagnostics/chips/
+!GEDI/Overlap/outputs/diagnostics/panels/
+!GEDI/Overlap/outputs/diagnostics/v2_figure_labeled.*
+!GEDI/Overlap/outputs/diagnostics/chip_sites.parquet
 GEDI/Overlap/.cache/
 !GEDI/Overlap/data/
 !GEDI/Overlap/data/*.geojson
