@@ -116,16 +116,28 @@ def _v2_filtered(parquet: Path) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _stratify_sample(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
+def _stratify_sample(
+    df: pd.DataFrame,
+    n: int,
+    seed: int,
+    exclude_pair_ids: set[int] | None = None,
+) -> pd.DataFrame:
     """Pick n=5 sites: 1 signal, 1 noise, 1 false_alarm, n-3 random.
 
     Strata defined relative to the OLS fit of ΔAGBD ~ ΔHV. Within each stratum
     we pick the row with the median residual (i.e. typical, not extreme).
+
+    ``exclude_pair_ids`` removes already-selected sites from the candidate pool
+    so subsequent calls return new picks (used by --append).
     """
     rng = np.random.default_rng(seed)
     fit = stats.linregress(df["delta_hv_db"], df["delta_agbd"])
     pred = fit.slope * df["delta_hv_db"] + fit.intercept
     df = df.assign(_residual=df["delta_agbd"].to_numpy() - pred.to_numpy())
+    if exclude_pair_ids:
+        df = df[~df["pair_id"].isin(exclude_pair_ids)]
+        log.info("excluded %d already-selected pair_ids; %d candidates remain",
+                 len(exclude_pair_ids), len(df))
 
     p20_dhv = df["delta_hv_db"].quantile(0.20)
     p20_dagbd = df["delta_agbd"].quantile(0.20)
@@ -216,12 +228,49 @@ def _label_v2_figure(df_filtered: pd.DataFrame, sites: pd.DataFrame, out_path: P
 def cmd_select(args: argparse.Namespace) -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     df = _v2_filtered(args.input)
-    sites = _stratify_sample(df, n=args.n, seed=args.seed)
     sites_path = args.out_dir / "chip_sites.parquet"
-    # Drop helper col before writing.
-    sites.drop(columns=["_residual"], errors="ignore").to_parquet(sites_path, index=False)
-    log.info("wrote %s (%d sites)", sites_path, len(sites))
-    _label_v2_figure(df, sites, args.out_dir / "v2_figure_labeled")
+
+    existing: pd.DataFrame | None = None
+    exclude: set[int] = set()
+    if args.append and sites_path.exists():
+        existing = pd.read_parquet(sites_path)
+        exclude = set(existing["pair_id"].astype(int).tolist())
+        log.info("--append: loaded %d existing sites from %s", len(existing), sites_path)
+
+    new_sites = _stratify_sample(df, n=args.n, seed=args.seed, exclude_pair_ids=exclude)
+
+    if existing is not None and len(existing) > 0:
+        # Re-label strata of new picks to avoid clashes (signal_2, etc.).
+        used_strata = set(existing["stratum"].astype(str).tolist())
+        renamed: list[str] = []
+        for s in new_sites["stratum"].tolist():
+            cand = s
+            i = 2
+            while cand in used_strata:
+                cand = f"{s}_{i}"
+                i += 1
+            renamed.append(cand)
+            used_strata.add(cand)
+        new_sites = new_sites.assign(stratum=renamed)
+        combined = pd.concat([existing, new_sites.drop(columns=["_residual"], errors="ignore")],
+                             ignore_index=True)
+        combined = combined.drop_duplicates(subset="pair_id", keep="first")
+    else:
+        combined = new_sites.drop(columns=["_residual"], errors="ignore")
+
+    combined.to_parquet(sites_path, index=False)
+    log.info("wrote %s (%d sites total, %d new)", sites_path, len(combined), len(new_sites))
+
+    # Re-render labeled scatter using all sites with delta values pulled from filtered df.
+    label_df = combined.merge(
+        df[["pair_id", "delta_hv_db", "delta_agbd"]], on="pair_id",
+        how="left", suffixes=("", "_y"),
+    )
+    for col in ("delta_hv_db", "delta_agbd"):
+        if f"{col}_y" in label_df.columns:
+            label_df[col] = label_df[f"{col}_y"]
+            label_df = label_df.drop(columns=[f"{col}_y"])
+    _label_v2_figure(df, label_df, args.out_dir / "v2_figure_labeled")
     return 0
 
 
@@ -590,6 +639,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sp.add_argument("--out-dir", type=Path, default=common_diag)
     sp.add_argument("--n", type=int, default=5)
     sp.add_argument("--seed", type=int, default=42)
+    sp.add_argument("--append", action="store_true",
+                    help="Append new picks to existing chip_sites.parquet, "
+                         "excluding already-selected pair_ids.")
 
     sp = sub.add_parser("download", help="Download chips for selected sites")
     sp.add_argument("--sites", type=Path, default=common_diag / "chip_sites.parquet")
@@ -615,6 +667,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sp.add_argument("--chip-m", type=float, default=500.0)
     sp.add_argument("--seed", type=int, default=42)
     sp.add_argument("--n", type=int, default=5)
+    sp.add_argument("--append", action="store_true",
+                    help="Append new picks to existing chip_sites.parquet.")
     sp.add_argument("--s2-window-days", type=int, default=180)
     sp.add_argument("--ee-project", default="dyce-biomass")
     sp.add_argument("--global-stretch", action="store_true")
@@ -636,6 +690,7 @@ def main(argv: list[str] | None = None) -> int:
         # select
         sel_args = argparse.Namespace(
             input=args.input, out_dir=args.out_dir, n=args.n, seed=args.seed,
+            append=args.append,
         )
         rc = cmd_select(sel_args)
         if rc != 0:
