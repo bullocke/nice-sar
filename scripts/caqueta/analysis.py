@@ -282,27 +282,38 @@ def spanning_test(
 
 
 # --- 6. Patches and case studies -----------------------------------------------------
+#
+# Coherence-based disturbance signals follow a sequence: a small dip from early
+# degradation, a large dip when the forest is felled or the land is burned, then a
+# large, sustained rise once the surface is non-forest. Dips are therefore measured
+# against the case's OWN recent history (after removing weather with the stable-
+# forest reference), not against intact forest: burned pasture can fall a long way
+# while staying at forest level.
 
 
 @dataclass
 class Patch:
-    """A clearing (or control area) used as a case study."""
+    """A clearing, burn, degradation patch, or control used as a case study."""
 
     case_id: str
     category: str
-    rows: np.ndarray  # pixel row indices of the clearing outline
+    rows: np.ndarray  # pixel row indices of the outline
     cols: np.ndarray  # pixel col indices
     delineation: str  # "Sentinel-2", "RADD seed", or "control"
+    state_before: str  # "forest", "non-forest", or "unknown"
     t0: float  # HV bracket start (NaN for controls)
     t1: float
     radd_day: float
     hv_step_db: float
-    hv_abrupt_frac: float
-    coh_dip_start: float  # first day of flagged coherence-dip pairs (NaN if none)
-    coh_dip_end: float
-    coh80_min_delta: float  # lowest (case - forest) 80 m coherence near the event
-    coh80_min_sigma: float  # same, in units of forest noise for this area
-    noise_sd: float  # SD of (forest patch - forest median) for this area, 80 m
+    optical_start: float  # optical clearing interval from NBR (NaN if none)
+    optical_end: float
+    dips: str  # flagged coherence dips: "YYYY-MM-DD/YYYY-MM-DD:sigma;..."
+    deepest_sigma: float  # deepest own-history change in 80 m coherence, in sigma
+    event_start: float  # earliest flagged dip or HV bracket start
+    event_end: float
+    spanning_forest_coh: float  # lowest forest coherence in pairs spanning the event
+    noise_sd: float  # forest level noise (80 m) for this area
+    change_sd: float  # forest own-history change noise (80 m) for this area
     rep_pixel: tuple[int, int]
 
     @property
@@ -330,7 +341,7 @@ def patch_series(ds: Dataset, rows: np.ndarray, cols: np.ndarray) -> dict[str, n
 
 
 _FOREST_CACHE: dict[int, dict[str, np.ndarray]] = {}
-_NOISE_CACHE: dict[tuple, float] = {}
+_NOISE_CACHE: dict[tuple, tuple[float, float]] = {}
 
 
 def forest_reference(ds: Dataset) -> dict[str, np.ndarray]:
@@ -350,14 +361,35 @@ def forest_reference(ds: Dataset) -> dict[str, np.ndarray]:
     return _FOREST_CACHE[key]
 
 
-def forest_noise_sd(ds: Dataset, n_px: int, kind: str = "coh80") -> float:
-    """Pair-to-pair noise of forest-normalized coherence for an area of ``n_px``.
+def own_history_change(delta: np.ndarray) -> np.ndarray:
+    """Change of each pair from the median of the case's previous pairs.
 
-    Samples ``NOISE_SAMPLES`` random squares of about ``n_px`` pixels that lie
-    entirely in stable forest, computes each square's mean coherence minus the
-    stable-forest median for every pair, and returns the pooled standard
-    deviation. This is how much an intact-forest patch of this size wanders
-    around the forest reference by chance; it shrinks as the area grows.
+    ``delta`` is the case's coherence minus the stable-forest median for the same
+    pair (weather removed). The baseline is the median of up to
+    ``CHANGE_BASELINE_PAIRS`` preceding pairs (at least two), so the change
+    measures a departure from the case's own recent state, whatever that state
+    is (forest, pasture, or regrowth). NaN for the first two pairs.
+    """
+    out = np.full(len(delta), np.nan)
+    k = config.CHANGE_BASELINE_PAIRS
+    for i in range(2, len(delta)):
+        prev = delta[max(0, i - k) : i]
+        prev = prev[np.isfinite(prev)]
+        if prev.size >= 2:
+            out[i] = delta[i] - np.median(prev)
+    return out
+
+
+def forest_noise(ds: Dataset, n_px: int, kind: str = "coh80") -> tuple[float, float]:
+    """Noise of the level and of the own-history change for an area of ``n_px``.
+
+    Samples ``NOISE_SAMPLES`` random squares of about ``n_px`` pixels lying
+    entirely in stable forest. For each square, computes its forest-normalized
+    coherence per pair and the own-history change. Returns the pooled standard
+    deviations ``(level_sd, change_sd)``: how far an intact-forest area of this
+    size wanders from the forest reference, and from its own recent median, by
+    chance. Both barely shrink with area because forest coherence varies
+    coherently across space, not only as estimation noise.
     """
     side = max(2, int(round(np.sqrt(n_px))))
     key = (id(ds), side, kind)
@@ -369,12 +401,21 @@ def forest_noise_sd(ds: Dataset, n_px: int, kind: str = "coh80") -> float:
         ref = forest_reference(ds)[kind]
         vals = getattr(ds, kind).values
         h = side // 2
-        deltas = [
-            np.nanmean(vals[:, y - h : y - h + side, x - h : x - h + side], axis=(1, 2)) - ref
-            for y, x in zip(ys[pick], xs[pick], strict=True)
-        ]
-        _NOISE_CACHE[key] = float(np.nanstd(np.stack(deltas)))
+        levels, changes = [], []
+        for y, x in zip(ys[pick], xs[pick], strict=True):
+            d = np.nanmean(vals[:, y - h : y - h + side, x - h : x - h + side], axis=(1, 2)) - ref
+            levels.append(d)
+            changes.append(own_history_change(d))
+        _NOISE_CACHE[key] = (
+            float(np.nanstd(np.stack(levels))),
+            float(np.nanstd(np.stack(changes))),
+        )
     return _NOISE_CACHE[key]
+
+
+def forest_noise_sd(ds: Dataset, n_px: int, kind: str = "coh80") -> float:
+    """Level noise only (see ``forest_noise``)."""
+    return forest_noise(ds, n_px, kind)[0]
 
 
 def hv_step(ds: Dataset, series: dict[str, np.ndarray]) -> dict:
@@ -382,8 +423,7 @@ def hv_step(ds: Dataset, series: dict[str, np.ndarray]) -> dict:
 
     Returns ``step`` (mean before - mean after, dB), the HV dates ``t0``/``t1``
     on either side of the best split, and ``abrupt_frac``: the share of the step
-    carried by the single interval at the split (1 = one-date drop; small =
-    decline spread over several dates).
+    carried by the single interval at the split.
     """
     hv = series["HV"] - forest_reference(ds)["HV"]
     days = ds.hv.days
@@ -398,54 +438,61 @@ def hv_step(ds: Dataset, series: dict[str, np.ndarray]) -> dict:
     }
 
 
-def coherence_dip(ds: Dataset, delta: np.ndarray, sigma: float, t0: float) -> dict:
-    """Find the pairs where coherence drops below forest noise around a clearing.
+def case_nbr(
+    s2: S2Stack, rows: np.ndarray, cols: np.ndarray, shape
+) -> tuple[np.ndarray, np.ndarray]:
+    """Case-mean Sentinel-2 NBR on dates usable for the case.
 
-    ``delta`` is the case's 80 m coherence minus the stable-forest median for the
-    same pair, so scene-wide weather effects are removed. The search runs from
-    ``DIP_SEARCH_BEFORE_D`` days before the HV bracket to the onset of the
-    post-clearing rise (the first of two consecutive pairs above +2 sigma).
-    Pairs below ``-DIP_SIGMA`` x sigma are flagged; their combined span is the
-    coherence-dip period. This timing is independent of RADD, and only loosely
-    tied to HV (through the search start), because coherence can drop before
-    HV, e.g. at felling, before the slash is burned.
+    A date counts if the area around the case (bounding box + 10 px) is clear and
+    haze-free and at least 80% of the case pixels are clear.
     """
-    pairs = ds.coh80
-    start = t0 - config.DIP_SEARCH_BEFORE_D
-    rise = np.inf
-    for i in range(len(delta) - 1):
-        if pairs.ref[i] >= start and delta[i] > 2 * sigma and delta[i + 1] > 2 * sigma:
-            rise = pairs.ref[i]
-            break
-    window = (pairs.sec > start) & (pairs.ref < rise)
-    if not window.any():
-        return {"start": np.nan, "end": np.nan, "min_delta": np.nan, "min_sigma": np.nan}
-    flagged = window & (delta < -config.DIP_SIGMA * sigma)
-    lowest = float(np.nanmin(delta[window]))
-    return {
-        "start": float(pairs.ref[flagged].min()) if flagged.any() else np.nan,
-        "end": float(pairs.sec[flagged].max()) if flagged.any() else np.nan,
-        "min_delta": lowest,
-        "min_sigma": lowest / sigma,
-    }
+    win = (
+        slice(max(rows.min() - 10, 0), min(rows.max() + 11, shape[0])),
+        slice(max(cols.min() - 10, 0), min(cols.max() + 11, shape[1])),
+    )
+    days, vals = [], []
+    for t in range(len(s2.days)):
+        if not s2.usable(t, win):
+            continue
+        v = s2.nbr[t][rows, cols]
+        if np.isfinite(v).mean() >= config.S2_MIN_CLEAR:
+            days.append(s2.days[t])
+            vals.append(float(np.nanmean(v)))
+    return np.array(days), np.array(vals)
+
+
+def optical_drop(days: np.ndarray, nbr: np.ndarray) -> tuple[float, float]:
+    """Optical clearing interval: last forest-like NBR date before the first cleared date.
+
+    Finds the first date NBR is <= ``NBR_CLEARED_MAX`` after having been forest-like
+    (>= ``NBR_FOREST_MIN``), and returns (last forest-like date before it, that
+    date). Later regrowth back to forest-like values is ignored. NaN, NaN if the
+    case is never forest-like, or never cleared afterwards.
+    """
+    seen_forest = None
+    for i in range(len(days)):
+        if nbr[i] >= config.NBR_FOREST_MIN:
+            seen_forest = i
+        elif nbr[i] <= config.NBR_CLEARED_MAX and seen_forest is not None:
+            return float(days[seen_forest]), float(days[i])
+    return np.nan, np.nan
 
 
 def delineate_clearing(
     s2: S2Stack, rows: np.ndarray, cols: np.ndarray, t0: float, t1: float, shape
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Outline the whole clearing around a seed from a Sentinel-2 NBR drop.
+    """Outline the whole disturbed area around a seed from a Sentinel-2 NBR drop.
 
-    RADD alerts fragment clearings (dates are patchy and lag), so the case
+    RADD alerts fragment disturbances (dates are patchy and lag), so the case
     outline is taken from Sentinel-2 instead:
 
     1. "before" = the last two usable images at least ``PRE_GAP_D`` days before
-       the HV bracket (so clearing that starts before the HV drop is included);
-       "after" = the first two usable images after the bracket. Usable means at
-       least 80% clear and haze-free around the seed.
-    2. A pixel is cleared if its NBR was forest-like before (max of the two
-       >= ``NBR_FOREST_MIN``), low after (min of the two <= ``NBR_CLEARED_MAX``),
-       and dropped by at least ``NBR_DROP_MIN``. Taking the max/min over two
-       dates bridges small cloud gaps.
+       the HV bracket; "after" = the first two usable images after it (usable =
+       at least 80% clear and haze-free around the seed).
+    2. A pixel is disturbed if its NBR dropped by at least ``NBR_DROP_MIN`` (max
+       of the two before, min of the two after, which bridges small cloud gaps)
+       and ended low (<= ``NBR_CLEARED_MAX``). No forest-like starting value is
+       required, so burns of already-cleared land are outlined too.
     3. Remove isolated pixels (morphological opening) and keep the 8-connected
        regions touching the seed.
 
@@ -468,14 +515,10 @@ def delineate_clearing(
     with np.errstate(all="ignore"):
         before = np.nanmax(s2.nbr[pre][:, win[0], win[1]], axis=0)
         after = np.nanmin(s2.nbr[post][:, win[0], win[1]], axis=0)
-    cleared = (
-        (before >= config.NBR_FOREST_MIN)
-        & (after <= config.NBR_CLEARED_MAX)
-        & (before - after >= config.NBR_DROP_MIN)
-    )
-    cleared = ndimage.binary_opening(cleared)
-    labels, _ = ndimage.label(cleared, structure=np.ones((3, 3)))
-    seed = np.zeros(cleared.shape, bool)
+    disturbed = (after <= config.NBR_CLEARED_MAX) & (before - after >= config.NBR_DROP_MIN)
+    disturbed = ndimage.binary_opening(disturbed)
+    labels, _ = ndimage.label(disturbed, structure=np.ones((3, 3)))
+    seed = np.zeros(disturbed.shape, bool)
     seed[rows - r0, cols - c0] = True
     ids = np.unique(labels[ndimage.binary_dilation(seed)])
     ids = ids[ids > 0]
@@ -486,43 +529,124 @@ def delineate_clearing(
     return rr + r0, cc + c0
 
 
-def _describe(ds: Dataset, rows: np.ndarray, cols: np.ndarray, control: bool = False) -> dict:
-    """HV step, coherence dip, and noise level for a set of pixels."""
+def describe(ds: Dataset, s2: S2Stack, rows: np.ndarray, cols: np.ndarray) -> dict:
+    """Everything used to categorize and plot a case (see ``select_cases``).
+
+    - HV step and bracket (forest-normalized case-mean HV)
+    - own-history change of 80 m coherence per pair and the flagged dips
+      (change below ``-DIP_SIGMA`` x the forest change noise for this area)
+    - the event: from the earliest flagged dip (or the HV bracket, if no dip) to
+      the end of the deepest dip (or the bracket)
+    - land state before the event: forest if the case-mean NBR before it is
+      >= ``NBR_FOREST_MIN``, non-forest if lower; if there is no usable optical
+      image, non-forest when coherence sat more than 2 sigma above forest
+    - optical clearing interval, and the lowest forest coherence among pairs
+      spanning the clearing (a clearing in a pair where the forest itself is near
+      the floor cannot produce a dip)
+    """
     s = patch_series(ds, rows, cols)
-    m = hv_step(ds, s)
-    sigma = forest_noise_sd(ds, len(rows))
-    delta = s["coh80"] - forest_reference(ds)["coh80"]
-    dip = (
-        {"start": np.nan, "end": np.nan, "min_delta": np.nan, "min_sigma": np.nan}
-        if control
-        else coherence_dip(ds, delta, sigma, m["t0"])
-    )
-    return {**m, "sigma": sigma, "dip": dip}
+    hv = hv_step(ds, s)
+    level_sd, change_sd = forest_noise(ds, len(rows))
+    ref = forest_reference(ds)["coh80"]
+    pairs = ds.coh80
+    delta = s["coh80"] - ref
+    change = own_history_change(delta)
+    flagged = np.flatnonzero(change < -config.DIP_SIGMA * change_sd)
+    deepest = int(np.nanargmin(change)) if np.isfinite(change).any() else None
+
+    if flagged.size:
+        main = int(flagged[np.argmin(change[flagged])])
+        event_start = float(pairs.ref[flagged].min())
+        event_end = float(pairs.sec[main])
+    else:
+        main = None
+        event_start, event_end = hv["t0"], hv["t1"]
+
+    nd, nv = case_nbr(s2, rows, cols, ds.grid.shape)
+    opt0, opt1 = optical_drop(nd, nv)
+    before_nbr = nv[nd < event_start]
+    if before_nbr.size:
+        state = "forest" if np.median(before_nbr) >= config.NBR_FOREST_MIN else "non-forest"
+    else:
+        pre_level = delta[pairs.sec <= event_start]
+        pre_level = pre_level[np.isfinite(pre_level)]
+        if pre_level.size >= 2:
+            state = "non-forest" if np.median(pre_level) > 2 * level_sd else "forest"
+        else:
+            state = "unknown"
+
+    span_lo, span_hi = (opt0, opt1) if np.isfinite(opt0) else (hv["t0"], hv["t1"])
+    spanning = (pairs.ref < span_hi) & (pairs.sec > span_lo)
+    return {
+        "hv": hv,
+        "delta": delta,
+        "change": change,
+        "flagged": flagged,
+        "main": main,
+        "deepest_sigma": float(change[deepest] / change_sd) if deepest is not None else np.nan,
+        "event_start": event_start,
+        "event_end": event_end,
+        "state": state,
+        "optical": (opt0, opt1),
+        "cleared": np.isfinite(opt0) or hv["step"] >= config.PATCH_STEP_DB,
+        "spanning_forest_coh": float(ref[spanning].min()) if spanning.any() else np.nan,
+        "level_sd": level_sd,
+        "change_sd": change_sd,
+    }
+
+
+CATEGORY_ORDER = (
+    "forest_clearing",
+    "cleared_land_disturbance",
+    "degradation",
+    "clearing_in_low_coherence_pair",
+    "clearing_without_dip",
+    "radd_only",
+)
+
+
+def categorize(m: dict) -> str | None:
+    """Assign a category from ``describe`` output (first match wins).
+
+    - ``forest_clearing``: forest before, a flagged coherence dip, and evidence
+      of clearing (optical NBR drop or HV step >= PATCH_STEP_DB)
+    - ``cleared_land_disturbance``: non-forest before and a flagged dip (e.g.
+      burning of felled vegetation or pasture)
+    - ``degradation``: forest before, a flagged dip, no clearing evidence
+    - ``clearing_in_low_coherence_pair``: forest cleared, no flagged dip, and the
+      pairs spanning the clearing had forest coherence below LOW_FOREST_COH (the
+      forest was already near the floor, so a dip cannot show)
+    - ``clearing_without_dip``: forest cleared, no flagged dip, forest coherent
+    - ``radd_only``: no flagged dip, no clearing evidence, HV step < PATCH_NO_STEP_DB
+    """
+    dip = m["flagged"].size > 0
+    if dip and m["state"] == "forest" and m["cleared"]:
+        return "forest_clearing"
+    if dip and m["state"] == "non-forest":
+        return "cleared_land_disturbance"
+    if dip and m["state"] == "forest":
+        return "degradation"
+    if not dip and m["state"] == "forest" and m["cleared"]:
+        if m["spanning_forest_coh"] < config.LOW_FOREST_COH:
+            return "clearing_in_low_coherence_pair"
+        return "clearing_without_dip"
+    if not dip and not m["cleared"] and m["hv"]["step"] < config.PATCH_NO_STEP_DB:
+        return "radd_only"
+    return None
 
 
 def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
-    """Pick case-study clearings and controls with transparent, seeded rules.
+    """Pick case studies with transparent, seeded rules.
 
     1. **Seeds**: connected groups of core RADD high-confidence pixels whose alert
        falls between the same two consecutive HV dates.
-    2. **Outline**: each seed is grown to the whole clearing with
-       ``delineate_clearing`` (Sentinel-2 NBR drop); if that fails, the seed is
-       kept.
-    3. **Describe** the outline: forest-normalized HV step, coherence dip
-       (pairs below -``DIP_SIGMA`` x forest noise), and noise level.
-    4. **Categorize** (in this order):
-
-       - ``gradual_decline``: HV step >= PATCH_STEP_DB, no single interval
-         carrying >= GRADUAL_FRAC of it
-       - ``dip_detected``: HV step >= PATCH_STEP_DB and at least one flagged pair
-       - ``no_dip``: HV step >= PATCH_STEP_DB and no pair near the event below
-         -1 x forest noise
-       - ``radd_only``: HV step < PATCH_NO_STEP_DB
-       - ``stable_forest`` / ``pre_series_pasture``: seeded 1 ha controls
-
-    Within each category, Sentinel-2 outlines come first, then ranking by how
-    strongly the case expresses the category; cases are at least 1 km apart and
-    never overlap.
+    2. **Outline**: each seed is grown with ``delineate_clearing`` (Sentinel-2 NBR
+       drop); if that fails, the seed is kept.
+    3. **Describe** (``describe``) and **categorize** (``categorize``).
+    4. Within each category, Sentinel-2 outlines come first, then the strongest
+       examples (deepest dip in sigma, or largest HV step for no-dip categories);
+       cases are at least 1 km apart and never overlap. Controls are seeded 1 ha
+       squares of stable forest and of land cleared before the series.
     """
     rng = np.random.default_rng(config.SEED)
     dist = ds.masks["disturbed"]
@@ -537,36 +661,25 @@ def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
             rows, cols = np.nonzero(labels == lab)
             if not config.MIN_PATCH_PX <= len(rows) <= 1000:
                 continue
-            seed_m = hv_step(ds, patch_series(ds, rows, cols))
-            obj = delineate_clearing(s2, rows, cols, seed_m["t0"], seed_m["t1"], ds.grid.shape)
+            seed_hv = hv_step(ds, patch_series(ds, rows, cols))
+            obj = delineate_clearing(s2, rows, cols, seed_hv["t0"], seed_hv["t1"], ds.grid.shape)
             how = "Sentinel-2"
             if obj is None:
                 obj, how = (rows, cols), "RADD seed"
-            candidates.append((obj[0], obj[1], how, _describe(ds, *obj)))
+            candidates.append((obj[0], obj[1], how, describe(ds, s2, *obj)))
     logger.info(
-        "%d candidate clearings (%d outlined from Sentinel-2)",
+        "%d candidates (%d outlined from Sentinel-2)",
         len(candidates),
         sum(c[2] == "Sentinel-2" for c in candidates),
     )
 
-    def category(m: dict) -> str | None:
-        big = m["step"] >= config.PATCH_STEP_DB
-        if big and m["abrupt_frac"] < config.GRADUAL_FRAC:
-            return "gradual_decline"
-        if big and np.isfinite(m["dip"]["start"]):
-            return "dip_detected"
-        if big and m["dip"]["min_sigma"] > -1:
-            return "no_dip"
-        if m["step"] < config.PATCH_NO_STEP_DB:
-            return "radd_only"
-        return None
+    def strength(m: dict, cat: str) -> float:
+        if cat in ("clearing_in_low_coherence_pair", "clearing_without_dip"):
+            return -m["hv"]["step"]
+        if cat == "radd_only":
+            return m["hv"]["step"]
+        return m["deepest_sigma"]
 
-    rank_key = {
-        "dip_detected": lambda m: m["dip"]["min_sigma"],
-        "no_dip": lambda m: -m["step"],
-        "gradual_decline": lambda m: -m["step"],
-        "radd_only": lambda m: m["step"],
-    }
     chosen: list[Patch] = []
     taken = np.zeros(ds.grid.shape, bool)
 
@@ -577,9 +690,9 @@ def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
         )
         return far and not taken[rows, cols].any()
 
-    for cat, key in rank_key.items():
-        pool = [c for c in candidates if category(c[3]) == cat]
-        pool.sort(key=lambda c: (c[2] != "Sentinel-2", key(c[3])))
+    for cat in CATEGORY_ORDER:
+        pool = [c for c in candidates if categorize(c[3]) == cat]
+        pool.sort(key=lambda c: (c[2] != "Sentinel-2", strength(c[3], cat)))
         k = 0
         for rows, cols, how, m in pool:
             if k == config.CASES_PER_CATEGORY:
@@ -608,7 +721,7 @@ def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
             if not available(rr, cc):
                 continue
             k += 1
-            m = _describe(ds, rr, cc, control=True)
+            m = describe(ds, s2, rr, cc)
             chosen.append(_make_patch(ds, f"{cat}_{k}", cat, rr, cc, "control", m, control=True))
             taken[rr, cc] = True
     return chosen
@@ -620,29 +733,40 @@ def _make_patch(
     # representative pixel: HV step (3x3-smoothed) closest to the case median
     sub = (slice(rows.min(), rows.max() + 1), slice(cols.min(), cols.max() + 1))
     hv = smooth_db(DateStack(ds.hv.values[:, sub[0], sub[1]], ds.hv.days))
-    i = int(np.searchsorted(ds.hv.days, m["t0"]))
+    i = int(np.searchsorted(ds.hv.days, m["hv"]["t0"]))
     pix_step = hv[: i + 1].mean(0) - hv[i + 1 :].mean(0)
     vals = pix_step[rows - rows.min(), cols - cols.min()]
     j = int(np.nanargmin(np.abs(vals - np.nanmedian(vals))))
     radd = ds.radd.alert_date[rows, cols]
     in_series = radd[radd >= ds.first_day]
     radd = in_series if in_series.size else radd[radd > -9999]
+    pairs = ds.coh80
+    dips = ";".join(
+        f"{config.to_date(pairs.ref[p])}/{config.to_date(pairs.sec[p])}:"
+        f"{m['change'][p] / m['change_sd']:.1f}"
+        for p in m["flagged"]
+    )
+    nan = np.nan
     return Patch(
         case_id=case_id,
         category=cat,
         rows=rows,
         cols=cols,
         delineation=how,
-        t0=np.nan if control else m["t0"],
-        t1=np.nan if control else m["t1"],
-        radd_day=float(np.median(radd)) if radd.size else np.nan,
-        hv_step_db=m["step"],
-        hv_abrupt_frac=m["abrupt_frac"],
-        coh_dip_start=m["dip"]["start"],
-        coh_dip_end=m["dip"]["end"],
-        coh80_min_delta=m["dip"]["min_delta"],
-        coh80_min_sigma=m["dip"]["min_sigma"],
-        noise_sd=m["sigma"],
+        state_before=m["state"],
+        t0=nan if control else m["hv"]["t0"],
+        t1=nan if control else m["hv"]["t1"],
+        radd_day=float(np.median(radd)) if radd.size else nan,
+        hv_step_db=m["hv"]["step"],
+        optical_start=m["optical"][0],
+        optical_end=m["optical"][1],
+        dips="" if control else dips,
+        deepest_sigma=m["deepest_sigma"],
+        event_start=nan if control else m["event_start"],
+        event_end=nan if control else m["event_end"],
+        spanning_forest_coh=nan if control else m["spanning_forest_coh"],
+        noise_sd=m["level_sd"],
+        change_sd=m["change_sd"],
         rep_pixel=(int(rows[j]), int(cols[j])),
     )
 

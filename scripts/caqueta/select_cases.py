@@ -39,17 +39,21 @@ FIELDS = [
     "area_ha",
     "lat",
     "lon",
+    "delineation",
+    "state_before",
+    "event_start",
+    "event_end",
+    "coh_dips",
+    "deepest_sigma",
+    "optical_start",
+    "optical_end",
     "hv_bracket_start",
     "hv_bracket_end",
-    "radd_alert",
-    "delineation",
     "hv_step_db",
-    "hv_abrupt_frac",
-    "coh_dip_start",
-    "coh_dip_end",
-    "coh80_min_delta",
-    "coh80_min_sigma",
+    "radd_alert",
+    "spanning_forest_coh",
     "noise_sd",
+    "change_sd",
     "rep_row",
     "rep_col",
 ]
@@ -76,25 +80,29 @@ class CaseRecord:
         v = self.row["hv_bracket_end"]
         return config.to_day(v) if v else np.nan
 
-    @property
-    def dip_start(self) -> float:
-        v = self.row["coh_dip_start"]
-        return config.to_day(v) if v else np.nan
-
-    @property
-    def dip_end(self) -> float:
-        v = self.row["coh_dip_end"]
+    def _day(self, field: str) -> float:
+        v = self.row[field]
         return config.to_day(v) if v else np.nan
 
     @property
     def event_start(self) -> float:
-        """Earliest of the HV bracket start and the coherence-dip start."""
-        return float(np.nanmin([self.t0, self.dip_start])) if np.isfinite(self.t0) else np.nan
+        """Earliest flagged coherence dip, or the HV bracket start if none."""
+        return self._day("event_start")
 
     @property
     def event_end(self) -> float:
-        """Latest of the HV bracket end and the coherence-dip end."""
-        return float(np.nanmax([self.t1, self.dip_end])) if np.isfinite(self.t1) else np.nan
+        """End of the deepest flagged dip, or the HV bracket end if none."""
+        return self._day("event_end")
+
+    @property
+    def dip_pairs(self) -> list[tuple[int, int, float]]:
+        """Flagged coherence dips as (ref day, sec day, change in sigma)."""
+        out = []
+        for item in filter(None, self.row["coh_dips"].split(";")):
+            span, sigma = item.split(":")
+            ref, sec = span.split("/")
+            out.append((config.to_day(ref), config.to_day(sec), float(sigma)))
+        return out
 
     @property
     def radd_day(self) -> float:
@@ -144,17 +152,21 @@ def write(cases: list[analysis.Patch], grid: data.Grid) -> None:
                     "area_ha": round(p.area_ha, 2),
                     "lat": round(lat, 5),
                     "lon": round(lon, 5),
+                    "delineation": p.delineation,
+                    "state_before": p.state_before,
+                    "event_start": _fmt_day(p.event_start),
+                    "event_end": _fmt_day(p.event_end),
+                    "coh_dips": p.dips,
+                    "deepest_sigma": round(p.deepest_sigma, 2),
+                    "optical_start": _fmt_day(p.optical_start),
+                    "optical_end": _fmt_day(p.optical_end),
                     "hv_bracket_start": _fmt_day(p.t0),
                     "hv_bracket_end": _fmt_day(p.t1),
-                    "radd_alert": _fmt_day(p.radd_day),
-                    "delineation": p.delineation,
                     "hv_step_db": round(p.hv_step_db, 2),
-                    "hv_abrupt_frac": round(p.hv_abrupt_frac, 2),
-                    "coh_dip_start": _fmt_day(p.coh_dip_start),
-                    "coh_dip_end": _fmt_day(p.coh_dip_end),
-                    "coh80_min_delta": round(p.coh80_min_delta, 3),
-                    "coh80_min_sigma": round(p.coh80_min_sigma, 2),
+                    "radd_alert": _fmt_day(p.radd_day),
+                    "spanning_forest_coh": round(p.spanning_forest_coh, 2),
                     "noise_sd": round(p.noise_sd, 3),
+                    "change_sd": round(p.change_sd, 3),
                     "rep_row": p.rep_pixel[0],
                     "rep_col": p.rep_pixel[1],
                 }

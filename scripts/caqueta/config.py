@@ -82,13 +82,19 @@ MIN_PATCH_PX = 25  # 25 px x 400 m2 = 1 ha
 # 417 candidate patches the median step is 1.4 dB and only 11% reach 2 dB.
 PATCH_STEP_DB = 1.5
 PATCH_NO_STEP_DB = 0.75
-ABRUPT_FRAC = 0.6  # >= 60% of the step happens between two consecutive HV dates
-GRADUAL_FRAC = 0.4  # < 40%: decline spread over several dates
-# Coherence dip: a pair is flagged when the case's 80 m coherence minus the
-# stable-forest median for the same pair is below -DIP_SIGMA x the forest noise
-# for an area of the case's size (see analysis.forest_noise_sd).
-DIP_SIGMA = 2.0
-DIP_SEARCH_BEFORE_D = 48  # start looking this many days before the HV bracket
+# Coherence dips are measured against the case's own recent history: the
+# forest-normalized 80 m coherence of a pair minus the median of the previous
+# CHANGE_BASELINE_PAIRS pairs. A pair is flagged when this change is below
+# -DIP_SIGMA x the same quantity's spread for intact-forest areas of the case's size.
+CHANGE_BASELINE_PAIRS = 3
+# 3 sigma: with ~18 testable pairs per series, a 2 sigma threshold flags at least one
+# false dip in 19-25% of intact-forest areas; 3 sigma brings this to about 1-2%
+# (calibrated on 600 random stable-forest squares of 1, 10, and 24 ha).
+DIP_SIGMA = 3.0
+# A clearing can only produce a dip if the forest was coherent in the pair spanning
+# it; below this forest coherence the pair is treated as masked (e.g. 0.17 in the
+# rainy 21 Dec - 2 Jan pair, close to the 80 m estimator floor of ~0.08).
+LOW_FOREST_COH = 0.30
 NOISE_SAMPLES = 150  # random forest squares used to estimate that noise
 
 # Clearing outlines from Sentinel-2 (analysis.delineate_clearing). NBR = (B8 - B12) /

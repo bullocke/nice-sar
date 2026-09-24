@@ -42,7 +42,11 @@ logger = logging.getLogger(__name__)
 OUT = select_cases.CASES_DIR
 # Cases that also get a variant with 20 m coherence chips (<case_id>_coh20.png):
 # the first case of each clearing category.
-COH20_VARIANT_CATEGORIES = ("dip_detected", "no_dip", "gradual_decline")
+COH20_VARIANT_CATEGORIES = (
+    "forest_clearing",
+    "cleared_land_disturbance",
+    "clearing_in_low_coherence_pair",
+)
 HV_RANGE_DB = (-16.0, -6.0)  # forest about -10 dB, pasture about -12.5 dB
 COH_RANGE = (0.0, 0.8)
 DIP_HATCH = style.COH80  # coherence-dip period: green hatching over the HV band
@@ -50,44 +54,64 @@ MIN_CHIP_GAP_D = 20  # the two "before" chips are at least this far apart
 REUSE_TOLERANCE_D = 12  # take an unused date/pair only if at most this much farther
 
 CATEGORY_TEXT = {
-    "dip_detected": (
-        "Coherence dip detected",
-        f"Clearings with a forest-normalized HV drop of at least {config.PATCH_STEP_DB} dB "
-        "(case mean) **and** at least one 80 m coherence pair more than "
-        f"{config.DIP_SIGMA:g} sigma below stable forest in the same pair, searched from "
-        f"{config.DIP_SEARCH_BEFORE_D} days before the HV drop to the onset of the "
-        "post-clearing rise. Sigma is the pair-to-pair spread of intact-forest areas "
-        "of the same size. Ranked by the depth of the dip in sigma units.\n\n"
-        "What to look for: the green band (coherence dip) relative to the orange band "
-        "(HV drop) and to the NBR drop. A dip that precedes the HV drop fits felling "
-        "(coherence lost) before the slash is burned (HV lost).",
+    "forest_clearing": (
+        "Forest clearing with a coherence dip",
+        "Forest before the event (case-mean Sentinel-2 NBR >= "
+        f"{config.NBR_FOREST_MIN}), at least one 80 m coherence pair more than "
+        f"{config.DIP_SIGMA:g} sigma below the case's own recent level, and evidence of "
+        f"clearing (NBR drop to <= {config.NBR_CLEARED_MAX}, or an HV step >= "
+        f"{config.PATCH_STEP_DB} dB). Ranked by the depth of the dip.\n\n"
+        "What to look for: a large dip in the pair(s) spanning the felling (hatched), "
+        "sometimes preceded by a smaller dip (early degradation or understory "
+        "clearing), then a large, sustained rise above forest once the surface is "
+        "non-forest. Compare the dip timing with the NBR drop and the later HV drop.",
     ),
-    "no_dip": (
-        "No coherence dip",
-        f"Clearings with an HV drop of at least {config.PATCH_STEP_DB} dB but **no** 80 m pair "
-        "below -1 sigma of forest noise near the event. Ranked by HV step.\n\n"
-        "What to look for: coherence moving straight from forest level to the "
-        "post-clearing level. Possible reasons: the clearing happened within a single "
-        "pair that also contains stable ground, the outline mixes cleared and intact "
-        "pixels, or the dip is hidden in forest noise.",
+    "cleared_land_disturbance": (
+        "Disturbance of already-cleared land (e.g. fire)",
+        "Non-forest before the event (NBR below forest level, or coherence well "
+        "above forest), with a flagged coherence dip. These are typically burns of "
+        "felled vegetation or pasture. Ranked by the depth of the dip.\n\n"
+        "What to look for: coherence already above forest (a stable, non-forest "
+        "surface) that collapses for one pair, often to about forest level, then "
+        "recovers. Measured against intact forest this looks like no change, which "
+        "is why dips are measured against each case's own history.",
     ),
-    "gradual_decline": (
-        "Gradual decline",
-        f"Clearings whose HV decline (>= {config.PATCH_STEP_DB} dB overall) is spread over "
-        f"several dates: no single interval carries >= {config.GRADUAL_FRAC:.0%} of it. "
-        "Ranked by total step.\n\n"
-        "What to look for: HV declining over one to three months, consistent with "
-        "progressive clearing or understory clearing before felling; compare with "
-        "the NBR panel to see when the canopy was actually removed.",
+    "degradation": (
+        "Dip in forest without clearing",
+        "Forest before the event, a flagged coherence dip, but no optical clearing "
+        f"(NBR never falls to <= {config.NBR_CLEARED_MAX} in the usable images) and an HV "
+        f"step < {config.PATCH_STEP_DB} dB. Candidates are degradation (selective or "
+        "understory clearing) or clearings hidden by cloud in the optical record. "
+        "Ranked by the depth of the dip.\n\n"
+        "What to look for: whether the chips show thinning or partial clearing, and "
+        "whether coherence rises afterwards (non-forest) or returns to forest level.",
+    ),
+    "clearing_in_low_coherence_pair": (
+        "Clearing inside a low-coherence pair",
+        "Forest cleared (NBR drop or HV step) with no flagged dip, where the pairs "
+        f"spanning the clearing had stable-forest coherence below {config.LOW_FOREST_COH} "
+        "(e.g. 0.17 in the rainy 21 Dec - 2 Jan pair, close to the 80 m estimator "
+        "floor of about 0.08). Ranked by HV step.\n\n"
+        "What to look for: coherence is low in the spanning pair, but so is intact "
+        "forest, so the clearing cannot pull it much lower. The event is dated by "
+        "the sharp rise in the following pair instead.",
+    ),
+    "clearing_without_dip": (
+        "Clearing without a coherence dip",
+        "Forest cleared (NBR drop or HV step) with no flagged dip even though the "
+        f"forest was coherent (>= {config.LOW_FOREST_COH}) in the spanning pairs. Ranked by "
+        "HV step.\n\n"
+        "What to look for: whether the clearing was gradual (spread over several "
+        "pairs, each below the threshold), whether the outline mixes cleared and "
+        "intact pixels, or whether the optical and HV dates disagree.",
     ),
     "radd_only": (
-        "RADD alert without NISAR HV response",
-        "Clearings with a RADD high-confidence alert during the series but a "
-        f"forest-normalized HV step < {config.PATCH_NO_STEP_DB} dB.\n\n"
-        "What to look for: whether NBR and the chips show a clearing. Reasons for no "
-        "HV step include clearing before the first usable dual-pol date (9 Dec 2025), "
-        "re-clearing of young regrowth that had little HV to lose, small or partial "
-        "disturbances, or RADD commission errors.",
+        "RADD alert without a NISAR or optical response",
+        "Areas with a RADD high-confidence alert during the series but no flagged "
+        f"coherence dip, no optical clearing, and an HV step < {config.PATCH_NO_STEP_DB} dB.\n\n"
+        "What to look for: whether the chips show any change. Candidates are "
+        "clearing before the series, small or partial disturbances, or RADD "
+        "commission errors.",
     ),
     "stable_forest": (
         "Stable forest control",
@@ -100,8 +124,8 @@ CATEGORY_TEXT = {
         "Pasture cleared before the series",
         "Random 1 ha squares alerted by RADD at least 90 days before the first NISAR "
         "date (already cleared land: pasture, crops, or regrowth).\n\n"
-        "What to look for: the post-disturbance reference, with low NBR, lower HV, and "
-        "coherence above forest.",
+        "What to look for: the post-disturbance reference, with low NBR, lower HV, "
+        "and coherence above forest, plus any burns during the series.",
     ),
 }
 
@@ -227,42 +251,18 @@ def _case_mask(case, window) -> np.ndarray:
 
 
 def nbr_series(ds: data.Dataset, s2: data.S2Stack, case, window) -> tuple:
-    """Case-mean and stable-forest NBR on dates usable for this case.
-
-    A date counts if the chip window is usable (clear, haze-free) and at least 80%
-    of the case pixels are clear.
-    """
-    days, case_v, forest_v = [], [], []
+    """Case-mean NBR (``analysis.case_nbr``) and the stable-forest median in the window."""
+    days, vals = analysis.case_nbr(s2, case.rows, case.cols, ds.grid.shape)
     sf = ds.masks["stable_forest"][window]
-    for t in _usable_days(s2, window):
-        v = s2.nbr[t][case.rows, case.cols]
-        if np.isfinite(v).mean() < config.S2_MIN_CLEAR:
-            continue
-        days.append(s2.days[t])
-        case_v.append(np.nanmean(v))
-        forest_v.append(np.nanmedian(s2.nbr[t][window][sf]) if sf.any() else np.nan)
-    return np.array(days), np.array(case_v), np.array(forest_v)
+    idx = {d: t for t, d in enumerate(s2.days)}
+    forest = [np.nanmedian(s2.nbr[idx[d]][window][sf]) if sf.any() else np.nan for d in days]
+    return days, vals, np.array(forest)
 
 
-def optical_drop(ds: data.Dataset, s2: data.S2Stack, case) -> tuple[int, int] | None:
-    """Dates bracketing the optical clearing: last NBR >= forest level, first after <= cleared.
-
-    Uses the case-mean NBR on dates clear over the case (``nbr_series``). Returns
-    ``None`` if the case never looks forested, or never looks cleared afterwards.
-    """
-    d, v, _ = nbr_series(ds, s2, case, case.window(ds.grid.shape))
-    forested = np.flatnonzero(v >= config.NBR_FOREST_MIN)
-    if not forested.size:
-        return None
-    later = [i for i in range(forested[-1] + 1, len(d)) if v[i] <= config.NBR_CLEARED_MAX]
-    if not later:
-        return None
-    return int(d[forested[-1]]), int(d[later[0]])
-
-
-def spanning_pairs_text(ds: data.Dataset, case, drop: tuple[int, int] | None) -> str:
+def spanning_pairs_text(ds: data.Dataset, case) -> str:
     """80 m pairs overlapping the optical clearing: forest level and case - forest."""
-    if drop is None:
+    lo, hi = case._day("optical_start"), case._day("optical_end")
+    if not np.isfinite(lo):
         return "-"
     pairs = ds.coh80
     forest = analysis.forest_reference(ds)["coh80"]
@@ -270,7 +270,7 @@ def spanning_pairs_text(ds: data.Dataset, case, drop: tuple[int, int] | None) ->
     parts = [
         f"{_pair_label(pairs.ref[p], pairs.sec[p])}: {forest[p]:.2f} / {series[p] - forest[p]:+.2f}"
         for p in range(len(pairs.ref))
-        if pairs.ref[p] < drop[1] and pairs.sec[p] > drop[0]
+        if pairs.ref[p] < hi and pairs.sec[p] > lo
     ]
     return "; ".join(parts) or "-"
 
@@ -278,9 +278,9 @@ def spanning_pairs_text(ds: data.Dataset, case, drop: tuple[int, int] | None) ->
 def _bands(ax, case) -> None:
     if np.isfinite(case.t0):
         ax.axvspan(*_dates([case.t0, case.t1]), color=style.EVENT_BAND, lw=0, zorder=0)
-    if np.isfinite(case.dip_start):
+    for ref, sec, _ in case.dip_pairs:
         ax.axvspan(
-            *_dates([case.dip_start, case.dip_end]),
+            *_dates([ref, sec]),
             facecolor="none",
             edgecolor=DIP_HATCH,
             hatch="///",
@@ -397,7 +397,7 @@ def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80")
     band_handles = []
     if np.isfinite(case.t0):
         band_handles.append(LegendPatch(color=style.EVENT_BAND, label="HV drop"))
-    if np.isfinite(case.dip_start):
+    if case.dip_pairs:
         band_handles.append(
             LegendPatch(facecolor="none", edgecolor=DIP_HATCH, hatch="///", label="Coherence dip")
         )
@@ -439,9 +439,9 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
     for cat, items in by_cat.items():
         title, text = CATEGORY_TEXT[cat]
         rows = [
-            "| Case | Area (ha) | Outline | Optical clearing (NBR) | Coherence dip | HV drop | "
-            "RADD alert | HV step (dB) | Lowest 80 m coherence − forest (sigma) |",
-            "|---|--:|---|---|---|---|---|--:|--:|",
+            "| Case | Area (ha) | Outline | Before | Coherence dips (sigma) | "
+            "Optical clearing (NBR) | HV drop | RADD alert | HV step (dB) |",
+            "|---|--:|---|---|---|---|---|---|--:|",
         ]
         timing = [
             "| Case | 80 m pairs spanning the optical clearing: forest coherence / case − forest |",
@@ -449,15 +449,15 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
         ]
         for c in items:
             hv = f"{c.hv_bracket_start} to {c.hv_bracket_end}" if c.hv_bracket_start else "-"
-            dip = f"{c.coh_dip_start} to {c.coh_dip_end}" if c.coh_dip_start else "-"
-            drop = optical_drop(ds, s2, c) if c.hv_bracket_start else None
-            opt = f"{config.to_date(drop[0])} to {config.to_date(drop[1])}" if drop else "-"
-            rows.append(
-                f"| {c.case_id} | {c.area_ha} | {c.delineation} | {opt} | {dip} | {hv} | "
-                f"{c.radd_alert or '-'} | {c.hv_step_db} | {c.coh80_min_delta} "
-                f"({c.coh80_min_sigma}) |"
+            dips = (
+                "; ".join(f"{_pair_label(r, s_)} ({sig:+.1f})" for r, s_, sig in c.dip_pairs) or "-"
             )
-            timing.append(f"| {c.case_id} | {spanning_pairs_text(ds, c, drop)} |")
+            opt = f"{c.optical_start} to {c.optical_end}" if c.optical_start else "-"
+            rows.append(
+                f"| {c.case_id} | {c.area_ha} | {c.delineation} | {c.state_before} | {dips} | "
+                f"{opt} | {hv} | {c.radd_alert or '-'} | {c.hv_step_db} |"
+            )
+            timing.append(f"| {c.case_id} | {spanning_pairs_text(ds, c)} |")
         readme = f"""# {title}
 
 {text}
@@ -483,12 +483,12 @@ left and the drop stays within forest noise.
 
 ## Reading the figures
 
-- **Outline** (yellow): the whole clearing, taken from Sentinel-2. Pixels whose NBR
-  was forest-like (>= {config.NBR_FOREST_MIN}) in the last two usable images at least {config.PRE_GAP_D} days
-  before the HV drop, and cleared (<= {config.NBR_CLEARED_MAX}, a drop of at least {config.NBR_DROP_MIN}) in the
-  first two usable images after it, connected to the RADD seed. "RADD seed" in the
-  table means the optical outline failed (clouds) and the smaller RADD-based seed
-  is used instead.
+- **Outline** (yellow): the whole disturbed area, taken from Sentinel-2: pixels
+  whose NBR dropped by at least {config.NBR_DROP_MIN} and ended <= {config.NBR_CLEARED_MAX} between the last two usable
+  images at least {config.PRE_GAP_D} days before the HV drop and the first two after it,
+  connected to the RADD seed. "RADD seed" means the optical outline failed
+  (clouds) and the smaller RADD-based seed is used instead. "Before" is the land
+  state before the event from the case-mean NBR (forest if >= {config.NBR_FOREST_MIN}).
 - **Sentinel-2 chips**: true colour, Cloud Score+ masked (clouds light gray), only
   dates at least 80% clear and haze-free (median blue <= 0.06). Two before the
   event (the earlier of the HV drop and the coherence dip; at least 20 days apart)
@@ -517,8 +517,11 @@ left and the drop stays within forest noise.
   Sigma is about 0.06-0.075 and barely shrinks with area, so forest coherence
   varies coherently in space rather than only as estimation noise.
 - **Bands**: orange fill = HV drop (last dual-pol date before and first after the
-  fitted HV step); green hatching = coherence dip (pairs more than {config.DIP_SIGMA:g} sigma below
-  forest). **Dotted line**: median in-series RADD alert date for the case (RADD
+  fitted HV step); green hatching = each flagged coherence dip: a pair whose 80 m
+  coherence (minus forest, to remove weather) is more than {config.DIP_SIGMA:g} sigma below the
+  median of the case's previous {config.CHANGE_BASELINE_PAIRS} pairs. Sigma is the spread of the same quantity
+  for intact-forest areas of the case's size; at {config.DIP_SIGMA:g} sigma, about 1-2% of intact
+  forest areas show any flagged dip over the whole series. **Dotted line**: median in-series RADD alert date for the case (RADD
   lags the NISAR HV drop by about two weeks on average).
 
 Regenerate with `python scripts/caqueta/select_cases.py` then
