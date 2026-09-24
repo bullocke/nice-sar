@@ -18,7 +18,7 @@ Outputs (under ``--output-dir``):
 Requires NASA Earthdata credentials.
 
 Usage:
-    python scripts/examples/caqueta_timeseries_subset.py
+    python scripts/caqueta/fetch_nisar_subsets.py
 """
 
 from __future__ import annotations

@@ -18,7 +18,7 @@ Output ``RADD_reference.tif`` bands:
 Requires an initialized Earth Engine account (``earthengine authenticate``).
 
 Usage:
-    python scripts/examples/caqueta_radd_reference.py \\
+    python scripts/caqueta/fetch_radd.py \\
         --template NISAR_Data/caqueta/GCOV/GCOV_20251103_HH.tif
 """
 
