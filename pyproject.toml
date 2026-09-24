@@ -95,4 +95,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=nice_sar"
+addopts = "--cov=nice_sar -m 'not network'"
+markers = [
+    "network: live queries against NASA CMR / ASF (deselected by default; run with -m network)",
+]

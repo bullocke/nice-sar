@@ -4,19 +4,29 @@ Provides convenience wrappers around ``asf_search`` for discovering
 NISAR products by AOI, date range, and product type.
 Public functions:
 
-- :func:`search_nisar` — Search for any NISAR product type by AOI, date range, and beam mode
+- :func:`search_nisar` — Search NISAR products by AOI, dates, maturity, track, and frame
 - :func:`search_gcov` — Convenience wrapper for GCOV-specific searches
+- :func:`search_gunw` — Convenience wrapper for GUNW-specific searches
 - :func:`get_result_size_bytes` — Extract file size in bytes from an ASF search result
+- :func:`summarize_results` — Tabulate maturity, CRID, track, frame, and dates
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import Any
 
 import asf_search
 
 from nice_sar._types import BBox
+from nice_sar.search.maturity import (
+    maturity_from_collection,
+    maturity_from_crid,
+    nisar_short_names,
+    parse_granule_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +87,18 @@ def search_nisar(
     start: str | datetime | None = None,
     end: str | datetime | None = None,
     max_results: int = 100,
+    maturity: str = "provisional",
+    track: int | None = None,
+    frame: int | None = None,
+    direction: str | None = None,
 ) -> list:
     """Search for NISAR products on ASF.
+
+    Results are restricted to the collections for the requested data maturity.
+    PROVISIONAL (calibrated) data are returned by default; request BETA
+    (pre-calibration) data explicitly with ``maturity="beta"``, or both with
+    ``maturity="any"``. Avoid mixing maturities in one analysis, since
+    differences can arise from changes in the processing software.
 
     Args:
         product_type: NISAR product type (e.g., ``"GCOV"``, ``"RSLC"``, ``"GUNW"``).
@@ -86,34 +106,62 @@ def search_nisar(
         start: Start date as ISO string or datetime.
         end: End date as ISO string or datetime.
         max_results: Maximum number of results to return.
+        maturity: ``"provisional"`` (default), ``"beta"``, ``"validated"``, or
+            ``"any"``.
+        track: Relative orbit (track) number, 1-173.
+        frame: Frame number, 1-176.
+        direction: Orbit direction, ``"ASCENDING"``/``"A"`` or
+            ``"DESCENDING"``/``"D"``.
 
     Returns:
         List of ``asf_search`` result objects.
     """
-    search_kwargs: dict = {
-        "dataset": "NISAR",
+    short_names = nisar_short_names(product_type, maturity)
+    search_kwargs: dict[str, Any] = {
+        "shortName": short_names,
         "maxResults": max_results,
     }
-
-    if product_type:
-        search_kwargs["processingLevel"] = product_type
 
     if bbox:
         west, south, east, north = bbox
         search_kwargs["intersectsWith"] = (
-            f"POLYGON(({west} {south},{east} {south},"
-            f"{east} {north},{west} {north},{west} {south}))"
+            f"POLYGON(({west} {south},{east} {south},{east} {north},{west} {north},{west} {south}))"
         )
 
     if start:
         search_kwargs["start"] = start
     if end:
         search_kwargs["end"] = end
+    if direction:
+        search_kwargs["flightDirection"] = _normalize_direction(direction)
 
-    logger.info("Searching ASF for NISAR %s products...", product_type)
+    # asf_search's relativeOrbit/frame keywords map to Sentinel-1 attributes,
+    # so NISAR track and frame are filtered on the CMR attributes directly.
+    cmr_keywords: list[tuple[str, str]] = []
+    if track is not None:
+        cmr_keywords.append(("attribute[]", f"int,TRACK_NUMBER,{int(track)}"))
+    if frame is not None:
+        cmr_keywords.append(("attribute[]", f"int,FRAME_NUMBER,{int(frame)}"))
+    if cmr_keywords:
+        search_kwargs["cmr_keywords"] = cmr_keywords
+
+    logger.info(
+        "Searching ASF for NISAR %s products (%s)...",
+        product_type,
+        ", ".join(short_names),
+    )
     results = asf_search.search(**search_kwargs)
     logger.info("Found %d results", len(results))
     return list(results)
+
+
+def _normalize_direction(direction: str) -> str:
+    value = direction.upper()
+    if value in ("A", "ASC", "ASCENDING"):
+        return "ASCENDING"
+    if value in ("D", "DESC", "DESCENDING"):
+        return "DESCENDING"
+    raise ValueError(f"Unknown orbit direction {direction!r}")
 
 
 def search_gcov(
@@ -121,6 +169,8 @@ def search_gcov(
     start: str | datetime | None = None,
     end: str | datetime | None = None,
     max_results: int = 100,
+    maturity: str = "provisional",
+    **kwargs: Any,
 ) -> list:
     """Convenience wrapper to search for NISAR GCOV products.
 
@@ -129,6 +179,9 @@ def search_gcov(
         start: Start date.
         end: End date.
         max_results: Maximum results.
+        maturity: Data maturity (see :func:`search_nisar`).
+        **kwargs: Additional filters passed to :func:`search_nisar`
+            (``track``, ``frame``, ``direction``).
 
     Returns:
         List of search results.
@@ -139,4 +192,113 @@ def search_gcov(
         start=start,
         end=end,
         max_results=max_results,
+        maturity=maturity,
+        **kwargs,
     )
+
+
+def search_gunw(
+    bbox: BBox | None = None,
+    start: str | datetime | None = None,
+    end: str | datetime | None = None,
+    max_results: int = 100,
+    maturity: str = "provisional",
+    **kwargs: Any,
+) -> list:
+    """Convenience wrapper to search for NISAR GUNW (interferogram) products.
+
+    Date filters apply to the reference acquisition time.
+
+    Args:
+        bbox: Bounding box as (west, south, east, north).
+        start: Start date.
+        end: End date.
+        max_results: Maximum results.
+        maturity: Data maturity (see :func:`search_nisar`).
+        **kwargs: Additional filters passed to :func:`search_nisar`
+            (``track``, ``frame``, ``direction``).
+
+    Returns:
+        List of search results.
+    """
+    return search_nisar(
+        product_type="GUNW",
+        bbox=bbox,
+        start=start,
+        end=end,
+        max_results=max_results,
+        maturity=maturity,
+        **kwargs,
+    )
+
+
+@dataclass
+class GranuleSummary:
+    """Key metadata of a NISAR search result."""
+
+    granule_id: str
+    product: str
+    maturity: str | None
+    crid: str | None
+    track: int | None
+    direction: str | None
+    frame: int | None
+    start: str | None
+    secondary_start: str | None
+    full_frame: bool | None
+    size_gb: float | None
+    url: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the summary as a plain dictionary."""
+        return asdict(self)
+
+
+def summarize_results(results: list) -> list[GranuleSummary]:
+    """Summarize ASF search results for inspection before download.
+
+    Maturity is taken from the collection name when available and otherwise
+    inferred from the CRID in the granule name.
+
+    Args:
+        results: ``asf_search`` result objects.
+
+    Returns:
+        One :class:`GranuleSummary` per result.
+    """
+    summaries = []
+    for result in results:
+        props = result.properties
+        granule_id = props.get("fileID") or props.get("sceneName") or ""
+        try:
+            parsed = parse_granule_name(granule_id)
+        except ValueError:
+            parsed = None
+
+        crid = props.get("crid") or (parsed.crid if parsed else None)
+        maturity = maturity_from_collection(props.get("collectionName"))
+        if maturity is None and crid:
+            maturity = maturity_from_crid(crid)
+
+        size = get_result_size_bytes(result)
+        summaries.append(
+            GranuleSummary(
+                granule_id=granule_id,
+                product=props.get("processingLevel") or (parsed.product if parsed else ""),
+                maturity=maturity,
+                crid=crid,
+                track=props.get("pathNumber") or (parsed.track if parsed else None),
+                direction=parsed.direction if parsed else None,
+                frame=props.get("frameNumber") or (parsed.frame if parsed else None),
+                start=parsed.start.isoformat() if parsed else props.get("startTime"),
+                secondary_start=(
+                    parsed.secondary_start.isoformat()
+                    if parsed and parsed.secondary_start
+                    else None
+                ),
+                full_frame=parsed.full_frame if parsed else None,
+                size_gb=round(size / 1e9, 2) if size else None,
+                url=props.get("url"),
+            )
+        )
+    return summaries

@@ -29,21 +29,45 @@ logger = logging.getLogger(__name__)
 def read_identification(h5_file: h5py.File) -> dict:
     """Read product-level identification metadata common to all NISAR products.
 
+    Handles both single-acquisition products (``zeroDopplerStartTime``,
+    ``absoluteOrbitNumber``) and pair products such as GUNW, which store
+    ``reference*`` and ``secondary*`` variants. For pair products, ``start_time``,
+    ``end_time``, and ``orbit`` refer to the reference acquisition.
+
     Args:
         h5_file: Open HDF5 file handle.
 
     Returns:
-        Dictionary with product_type, start_time, end_time, orbit, track, frame.
+        Dictionary with product_type, start_time, end_time, orbit, track, frame,
+        and, when present, crid, secondary_start_time, secondary_end_time, and
+        secondary_orbit.
     """
-    id_path = "/science/LSAR/identification"
-    return {
-        "product_type": h5_file[f"{id_path}/productType"][()].decode(),
-        "start_time": h5_file[f"{id_path}/zeroDopplerStartTime"][()].decode(),
-        "end_time": h5_file[f"{id_path}/zeroDopplerEndTime"][()].decode(),
-        "orbit": int(h5_file[f"{id_path}/absoluteOrbitNumber"][()]),
-        "track": int(h5_file[f"{id_path}/trackNumber"][()]),
-        "frame": int(h5_file[f"{id_path}/frameNumber"][()]),
+    ident = h5_file["/science/LSAR/identification"]
+
+    def _str(name: str) -> str:
+        value = ident[name][()]
+        return value.decode() if isinstance(value, bytes) else str(value)
+
+    prefix = "reference" if "referenceZeroDopplerStartTime" in ident else ""
+
+    def _key(name: str) -> str:
+        return prefix + name[0].upper() + name[1:] if prefix else name
+
+    meta: dict = {
+        "product_type": _str("productType"),
+        "start_time": _str(_key("zeroDopplerStartTime")),
+        "end_time": _str(_key("zeroDopplerEndTime")),
+        "orbit": int(ident[_key("absoluteOrbitNumber")][()]),
+        "track": int(ident["trackNumber"][()]),
+        "frame": int(ident["frameNumber"][()]),
     }
+    if "compositeReleaseId" in ident:
+        meta["crid"] = _str("compositeReleaseId")
+    if prefix:
+        meta["secondary_start_time"] = _str("secondaryZeroDopplerStartTime")
+        meta["secondary_end_time"] = _str("secondaryZeroDopplerEndTime")
+        meta["secondary_orbit"] = int(ident["secondaryAbsoluteOrbitNumber"][()])
+    return meta
 
 
 def get_projection_info_l2(

@@ -73,3 +73,78 @@ class TestCmdInfo:
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["product_type"] == "GUNW"
+
+
+class TestSearchDownloadCommands:
+    def test_search_defaults(self) -> None:
+        args = build_parser().parse_args(["search"])
+        assert args.command == "search"
+        assert args.product == "GCOV"
+        assert args.maturity == "provisional"
+        assert args.bbox is None
+
+    def test_search_filters(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "search",
+                "--product",
+                "GUNW",
+                "--bbox=-63.5,-10,-62.5,-9",
+                "--maturity",
+                "any",
+                "--track",
+                "161",
+                "--frame",
+                "173",
+                "--direction",
+                "a",
+                "--json",
+            ]
+        )
+        assert (args.maturity, args.track, args.frame, args.direction) == (
+            "any",
+            161,
+            173,
+            "A",
+        )
+        assert args.json
+
+    def test_invalid_maturity_rejected(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["search", "--maturity", "gamma"])
+
+    def test_download_and_subset_accept_maturity(self) -> None:
+        args = build_parser().parse_args(
+            ["download", "--product", "GCOV", "--maturity", "beta", "-o", "out"]
+        )
+        assert args.maturity == "beta"
+        assert args.output_dir == Path("out")
+        args = build_parser().parse_args(
+            ["subset", "--bbox=0,0,1,1", "--product", "GCOV", "--maturity", "any"]
+        )
+        assert args.maturity == "any"
+
+    def test_cmd_search_passes_filters(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        calls: dict = {}
+
+        def fake_search(**kwargs: object) -> list:
+            calls.update(kwargs)
+            r = MagicMock()
+            r.properties = {
+                "fileID": "NISAR_L2_PR_GCOV_023_060_A_172_2005_DHDH_A_20260618T095228"
+                "_20260618T095302_P05023_N_F_J_001",
+                "collectionName": "NISAR_L2_GCOV_PROVISIONAL_V1",
+            }
+            return [r]
+
+        monkeypatch.setattr("nice_sar.search.asf.search_nisar", fake_search)
+        main(["search", "--maturity", "beta", "--track", "60", "--json"])
+        assert calls["maturity"] == "beta"
+        assert calls["track"] == 60
+        out = json.loads(capsys.readouterr().out)
+        assert out[0]["maturity"] == "provisional"
+        assert out[0]["frame"] == 172

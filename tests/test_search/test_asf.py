@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from nice_sar.search.asf import get_result_size_bytes, search_gcov, search_nisar
+import pytest
+
+from nice_sar.search.asf import (
+    get_result_size_bytes,
+    search_gcov,
+    search_gunw,
+    search_nisar,
+    summarize_results,
+)
 from nice_sar.search.earthdata import search_earthdata
 
 # ---------------------------------------------------------------------------
@@ -41,9 +49,45 @@ class TestSearchNisar:
         search_nisar()
         mock_search.assert_called_once()
         kwargs = mock_search.call_args.kwargs
-        assert kwargs["dataset"] == "NISAR"
-        assert kwargs["processingLevel"] == "GCOV"
+        assert kwargs["shortName"] == ["NISAR_L2_GCOV_PROVISIONAL_V1"]
         assert kwargs["maxResults"] == 100
+        assert "cmr_keywords" not in kwargs
+        assert "flightDirection" not in kwargs
+
+    @patch("nice_sar.search.asf.asf_search.search")
+    def test_beta_maturity(self, mock_search: MagicMock) -> None:
+        mock_search.return_value = []
+        search_nisar(maturity="beta")
+        assert mock_search.call_args.kwargs["shortName"] == ["NISAR_L2_GCOV_BETA_V1"]
+
+    @patch("nice_sar.search.asf.asf_search.search")
+    def test_any_maturity(self, mock_search: MagicMock) -> None:
+        mock_search.return_value = []
+        search_nisar(product_type="GUNW", maturity="any")
+        assert mock_search.call_args.kwargs["shortName"] == [
+            "NISAR_L2_GUNW_BETA_V1",
+            "NISAR_L2_GUNW_PROVISIONAL_V1",
+            "NISAR_L2_GUNW_V1",
+        ]
+
+    def test_invalid_maturity_raises(self) -> None:
+        with pytest.raises(ValueError, match="maturity"):
+            search_nisar(maturity="gamma")
+
+    @patch("nice_sar.search.asf.asf_search.search")
+    def test_track_frame_direction(self, mock_search: MagicMock) -> None:
+        mock_search.return_value = []
+        search_nisar(track=161, frame=173, direction="a")
+        kwargs = mock_search.call_args.kwargs
+        assert kwargs["flightDirection"] == "ASCENDING"
+        assert kwargs["cmr_keywords"] == [
+            ("attribute[]", "int,TRACK_NUMBER,161"),
+            ("attribute[]", "int,FRAME_NUMBER,173"),
+        ]
+
+    def test_invalid_direction_raises(self) -> None:
+        with pytest.raises(ValueError, match="direction"):
+            search_nisar(direction="north")
 
     @patch("nice_sar.search.asf.asf_search.search")
     def test_bbox_converted_to_wkt(self, mock_search: MagicMock) -> None:
@@ -66,7 +110,7 @@ class TestSearchNisar:
         mock_search.return_value = []
         search_nisar(product_type="RSLC")
         kwargs = mock_search.call_args.kwargs
-        assert kwargs["processingLevel"] == "RSLC"
+        assert kwargs["shortName"] == ["NISAR_L1_RSLC_PROVISIONAL_V1"]
 
     @patch("nice_sar.search.asf.asf_search.search")
     def test_max_results(self, mock_search: MagicMock) -> None:
@@ -85,8 +129,71 @@ class TestSearchGcov:
         results = search_gcov(bbox=(-112.0, 40.0, -111.0, 41.0), max_results=5)
         assert len(results) == 1
         kwargs = mock_search.call_args.kwargs
-        assert kwargs["processingLevel"] == "GCOV"
+        assert kwargs["shortName"] == ["NISAR_L2_GCOV_PROVISIONAL_V1"]
         assert kwargs["maxResults"] == 5
+
+    @patch("nice_sar.search.asf.asf_search.search")
+    def test_passes_maturity_and_filters(self, mock_search: MagicMock) -> None:
+        mock_search.return_value = []
+        search_gcov(maturity="beta", track=25)
+        kwargs = mock_search.call_args.kwargs
+        assert kwargs["shortName"] == ["NISAR_L2_GCOV_BETA_V1"]
+        assert kwargs["cmr_keywords"] == [("attribute[]", "int,TRACK_NUMBER,25")]
+
+
+class TestSearchGunw:
+    """Tests for search_gunw() convenience wrapper."""
+
+    @patch("nice_sar.search.asf.asf_search.search")
+    def test_uses_gunw_collection(self, mock_search: MagicMock) -> None:
+        mock_search.return_value = []
+        search_gunw()
+        assert mock_search.call_args.kwargs["shortName"] == ["NISAR_L2_GUNW_PROVISIONAL_V1"]
+
+
+GCOV_ID = (
+    "NISAR_L2_PR_GCOV_023_060_A_172_2005_DHDH_A_20260618T095228_20260618T095302_P05023_N_F_J_001"
+)
+GUNW_ID = (
+    "NISAR_L2_PR_GUNW_029_161_A_174_030_2000_SH_20260905T100151_20260905T100225"
+    "_20260917T100151_20260917T100225_P05023_N_F_J_001"
+)
+
+
+class TestSummarizeResults:
+    """Tests for summarize_results()."""
+
+    def test_uses_collection_and_properties(self) -> None:
+        r = MagicMock()
+        r.properties = {
+            "fileID": GUNW_ID,
+            "fileName": GUNW_ID + ".h5",
+            "collectionName": "NISAR_L2_GUNW_PROVISIONAL_V1",
+            "crid": "P05023",
+            "processingLevel": "GUNW",
+            "pathNumber": 161,
+            "frameNumber": 174,
+            "bytes": {GUNW_ID + ".h5": {"bytes": 2_280_000_000}},
+            "url": "https://example.com/g.h5",
+        }
+        (s,) = summarize_results([r])
+        assert s.maturity == "provisional"
+        assert s.crid == "P05023"
+        assert (s.track, s.direction, s.frame) == (161, "A", 174)
+        assert s.start == "2026-09-05T10:01:51"
+        assert s.secondary_start == "2026-09-17T10:01:51"
+        assert s.size_gb == 2.28
+        assert s.to_dict()["url"] == "https://example.com/g.h5"
+
+    def test_falls_back_to_granule_name(self) -> None:
+        r = MagicMock()
+        r.properties = {"sceneName": GCOV_ID.replace("P05023", "X05009")}
+        (s,) = summarize_results([r])
+        assert s.maturity == "beta"
+        assert s.crid == "X05009"
+        assert (s.product, s.track, s.frame) == ("GCOV", 60, 172)
+        assert s.full_frame is True
+        assert s.secondary_start is None
 
 
 class TestGetResultSizeBytes:
@@ -141,8 +248,24 @@ class TestSearchEarthdata:
         mock_search.return_value = []
         search_earthdata()
         kwargs = mock_search.call_args.kwargs
-        assert kwargs["short_name"] == "NISAR_L2_GCOV_BETA_V1"
+        assert kwargs["short_name"] == "NISAR_L2_GCOV_PROVISIONAL_V1"
         assert kwargs["count"] == 100
+
+    @patch("nice_sar.search.earthdata.earthaccess.search_data")
+    def test_product_and_maturity(self, mock_search: MagicMock) -> None:
+        mock_search.return_value = []
+        search_earthdata(product_type="GUNW", maturity="beta")
+        assert mock_search.call_args.kwargs["short_name"] == "NISAR_L2_GUNW_BETA_V1"
+
+    @patch("nice_sar.search.earthdata.earthaccess.search_data")
+    def test_any_maturity_passes_list(self, mock_search: MagicMock) -> None:
+        mock_search.return_value = []
+        search_earthdata(maturity="any")
+        assert mock_search.call_args.kwargs["short_name"] == [
+            "NISAR_L2_GCOV_BETA_V1",
+            "NISAR_L2_GCOV_PROVISIONAL_V1",
+            "NISAR_L2_GCOV_V1",
+        ]
 
     @patch("nice_sar.search.earthdata.earthaccess.search_data")
     def test_custom_short_name(self, mock_search: MagicMock) -> None:

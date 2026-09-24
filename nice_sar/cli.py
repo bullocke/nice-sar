@@ -7,6 +7,9 @@ Provides subcommands for common NISAR data workflows:
 - ``rgb``: Generate RGB composites
 - ``insar``: InSAR processing utilities
 - ``timeseries``: Time series change detection
+- ``search``: Search ASF for NISAR granules by maturity, AOI, track, and frame
+- ``download``: Download full NISAR HDF5 granules from ASF
+- ``subset``: Download a spatial subset of a NISAR product as GeoTIFF
 """
 
 from __future__ import annotations
@@ -395,6 +398,10 @@ def cmd_subset(args: argparse.Namespace) -> None:
         start=args.start,
         end=args.end,
         max_results=args.max_granules,
+        maturity=args.maturity,
+        track=args.track,
+        frame=args.frame,
+        direction=args.direction,
     )
     if not results:
         logger.error("No granules found for the specified parameters.")
@@ -435,6 +442,112 @@ def cmd_subset(args: argparse.Namespace) -> None:
             print(f"  {p}")
     else:
         print("No files were written.")
+
+
+# ---------------------------------------------------------------------------
+# search / download
+# ---------------------------------------------------------------------------
+
+
+def _run_search(args: argparse.Namespace, max_results: int) -> list:
+    from nice_sar.io.bbox_parser import parse_bbox
+    from nice_sar.search.asf import search_nisar
+
+    if not args.verbose:
+        logging.getLogger("asf_search").setLevel(logging.WARNING)
+
+    bbox = None
+    if args.bbox_file:
+        bbox = parse_bbox(str(args.bbox_file))
+    elif args.bbox:
+        bbox = parse_bbox(args.bbox)
+
+    return search_nisar(
+        product_type=args.product.upper(),
+        bbox=(bbox[0], bbox[1], bbox[2], bbox[3]) if bbox else None,
+        start=args.start,
+        end=args.end,
+        max_results=max_results,
+        maturity=args.maturity,
+        track=args.track,
+        frame=args.frame,
+        direction=args.direction,
+    )
+
+
+def _print_summaries(summaries: list, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps([s.to_dict() for s in summaries], indent=2))
+        return
+    header = (
+        f"{'maturity':<12}{'crid':<8}{'trk':>4} {'dir':<4}{'frm':>4}  "
+        f"{'start':<20}{'secondary':<20}{'GB':>6}  granule"
+    )
+    print(header)
+    print("-" * len(header))
+    for s in summaries:
+        print(
+            f"{s.maturity or '?':<12}{s.crid or '?':<8}{s.track or 0:>4} "
+            f"{s.direction or '?':<4}{s.frame or 0:>4}  {(s.start or '')[:19]:<20}"
+            f"{(s.secondary_start or '')[:19]:<20}{s.size_gb or 0:>6.2f}  {s.granule_id}"
+        )
+    print(f"\n{len(summaries)} granule(s)")
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    """Search ASF for NISAR granules and print a summary table."""
+    from nice_sar.search.asf import summarize_results
+
+    results = _run_search(args, max_results=args.max_results)
+    _print_summaries(summarize_results(results), args.json)
+
+
+def cmd_download(args: argparse.Namespace) -> None:
+    """Search ASF for NISAR granules and download the full HDF5 files."""
+    from nice_sar.io.download import download_granules
+    from nice_sar.search.asf import summarize_results
+
+    results = _run_search(args, max_results=args.max_granules)
+    if not results:
+        logger.error("No granules found for the specified parameters.")
+        sys.exit(1)
+    _print_summaries(summarize_results(results), as_json=False)
+    paths = download_granules(results, args.output_dir)
+    print(f"\nDone — {len(paths)} file(s) in {args.output_dir}/")
+    for path in paths:
+        print(f"  {path}")
+
+
+def _add_search_filters(parser: argparse.ArgumentParser, bbox_required: bool) -> None:
+    """Add the product, AOI, date, and maturity filters shared by search commands."""
+    bbox_group = parser.add_mutually_exclusive_group(required=bbox_required)
+    bbox_group.add_argument(
+        "--bbox",
+        help="Bounding box as west,south,east,north in WGS84 degrees "
+        "(use --bbox=-63.5,-10,-62.5,-9 when west is negative)",
+    )
+    bbox_group.add_argument(
+        "--bbox-file",
+        type=Path,
+        help="Path to a spatial file (.geojson, .shp, .gpkg) defining the AOI",
+    )
+    parser.add_argument("--start", default=None, help="Start date (ISO, e.g. 2026-06-17)")
+    parser.add_argument("--end", default=None, help="End date (ISO, e.g. 2026-09-30)")
+    parser.add_argument(
+        "--maturity",
+        choices=["provisional", "beta", "validated", "any"],
+        default="provisional",
+        help="Data maturity (default: provisional). BETA products are pre-calibration.",
+    )
+    parser.add_argument("--track", type=int, default=None, help="Track (relative orbit) number")
+    parser.add_argument("--frame", type=int, default=None, help="Frame number")
+    parser.add_argument(
+        "--direction",
+        choices=["A", "D", "ASCENDING", "DESCENDING"],
+        type=str.upper,
+        default=None,
+        help="Orbit direction",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -582,16 +695,7 @@ def build_parser() -> argparse.ArgumentParser:
         "subset",
         help="Download a spatial subset of a NISAR product as GeoTIFF",
     )
-    bbox_group = p_sub.add_mutually_exclusive_group(required=True)
-    bbox_group.add_argument(
-        "--bbox",
-        help='Bounding box as "west,south,east,north" in WGS84 degrees',
-    )
-    bbox_group.add_argument(
-        "--bbox-file",
-        type=Path,
-        help="Path to a spatial file (.geojson, .shp, .gpkg) defining the AOI",
-    )
+    _add_search_filters(p_sub, bbox_required=True)
     p_sub.add_argument(
         "--product",
         required=True,
@@ -605,8 +709,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Polarization to download (repeatable, e.g. --polarization HH --polarization HV)",
     )
     p_sub.add_argument("--layer", default=None, help="Layer name (GUNW/GOFF)")
-    p_sub.add_argument("--start", default=None, help="Start date (ISO, e.g. 2025-01-01)")
-    p_sub.add_argument("--end", default=None, help="End date (ISO, e.g. 2025-06-01)")
     p_sub.add_argument("--max-granules", type=int, default=1, help="Max granules to download")
     p_sub.add_argument(
         "-o",
@@ -619,6 +721,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-confirm",
         action="store_true",
         help="Skip interactive confirmation prompt",
+    )
+
+    # --- search ---
+    p_search = sub.add_parser(
+        "search",
+        help="Search ASF for NISAR granules (filter by maturity, track, frame)",
+    )
+    p_search.add_argument("--product", default="GCOV", help="Product type (default: GCOV)")
+    _add_search_filters(p_search, bbox_required=False)
+    p_search.add_argument("--max-results", type=int, default=100, help="Max results")
+    p_search.add_argument("--json", action="store_true", help="Print results as JSON")
+
+    # --- download ---
+    p_dl = sub.add_parser(
+        "download",
+        help="Download full NISAR HDF5 granules from ASF",
+    )
+    p_dl.add_argument("--product", required=True, help="Product type (GCOV, GUNW, ...)")
+    _add_search_filters(p_dl, bbox_required=False)
+    p_dl.add_argument("--max-granules", type=int, default=1, help="Max granules to download")
+    p_dl.add_argument(
+        "-o",
+        "--output-dir",
+        type=Path,
+        default=Path("nisar_data"),
+        help="Output directory (default: ./nisar_data/)",
     )
 
     parser.set_defaults(include_unimplemented=True)
@@ -641,6 +769,8 @@ def main(argv: list[str] | None = None) -> None:
         "insar": cmd_insar,
         "timeseries": cmd_timeseries,
         "subset": cmd_subset,
+        "search": cmd_search,
+        "download": cmd_download,
     }
     if args.command == "forests" and getattr(args, "subcommand", None) == "list-methods":
         args.include_unimplemented = not args.implemented_only

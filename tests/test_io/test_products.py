@@ -49,6 +49,36 @@ class TestReadGcovMetadata:
         assert "2025-06-01" in meta["start_time"]
 
 
+class TestReadIdentificationLayouts:
+    """read_identification on real NISAR identification layouts."""
+
+    def test_pair_product_layout(self, tmp_path: Path) -> None:
+        # GUNW/RIFG/RUNW/GOFF/ROFF store reference* and secondary* fields.
+        path = tmp_path / "gunw.h5"
+        with h5py.File(path, "w") as h5:
+            grp = h5.create_group("/science/LSAR/identification")
+            grp.create_dataset("productType", data=np.bytes_("GUNW"))
+            grp.create_dataset("trackNumber", data=np.int32(68))
+            grp.create_dataset("frameNumber", data=np.int32(93))
+            grp.create_dataset("compositeReleaseId", data=np.bytes_("P05023"))
+            for role, day, orbit in (("reference", "30", 4000), ("secondary", "12", 4171)):
+                grp.create_dataset(
+                    f"{role}ZeroDopplerStartTime", data=np.bytes_(f"2026-07-{day}T22:26:31")
+                )
+                grp.create_dataset(
+                    f"{role}ZeroDopplerEndTime", data=np.bytes_(f"2026-07-{day}T22:27:06")
+                )
+                grp.create_dataset(f"{role}AbsoluteOrbitNumber", data=np.int32(orbit))
+        with h5py.File(path, "r") as h5:
+            meta = read_identification(h5)
+        assert meta["product_type"] == "GUNW"
+        assert (meta["track"], meta["frame"], meta["orbit"]) == (68, 93, 4000)
+        assert meta["start_time"] == "2026-07-30T22:26:31"
+        assert meta["secondary_start_time"] == "2026-07-12T22:26:31"
+        assert meta["secondary_orbit"] == 4171
+        assert meta["crid"] == "P05023"
+
+
 class TestGetProjectionInfo:
     """Tests for get_projection_info."""
 

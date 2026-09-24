@@ -35,9 +35,7 @@ class TestDownloadUrl:
         assert result == tmp_path / "NISAR_GCOV.h5"
 
     @patch("nice_sar.io.download.asf_search")
-    def test_uses_provided_session(
-        self, mock_asf: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_uses_provided_session(self, mock_asf: MagicMock, tmp_path: Path) -> None:
         from nice_sar.io.download import download_url
 
         session = MagicMock()
@@ -82,15 +80,70 @@ class TestDownloadGranules:
         call_kwargs = mock_asf.download_urls.call_args
         assert len(call_kwargs[1]["urls"]) == 2
 
+    @patch("nice_sar.io.download._get_asf_session")
+    @patch("nice_sar.io.download.asf_search")
+    def test_returns_paths_for_results_only(
+        self, mock_asf: MagicMock, mock_session: MagicMock, tmp_path: Path
+    ) -> None:
+        from nice_sar.io.download import download_granules
+
+        (tmp_path / "unrelated.h5").write_bytes(b"x")
+        r1 = MagicMock()
+        r1.properties = {"url": "https://example.com/g1.h5", "fileName": "g1.h5"}
+        paths = download_granules([r1], tmp_path)
+        assert paths == [tmp_path / "g1.h5"]
+
+    @patch("nice_sar.io.download._get_asf_session")
+    @patch("nice_sar.io.download.asf_search")
+    def test_skips_complete_and_replaces_partial(
+        self, mock_asf: MagicMock, mock_session: MagicMock, tmp_path: Path
+    ) -> None:
+        from nice_sar.io.download import download_granules
+
+        (tmp_path / "done.h5").write_bytes(b"1234")
+        (tmp_path / "partial.h5").write_bytes(b"12")
+        done = MagicMock()
+        done.properties = {
+            "url": "https://example.com/done.h5",
+            "fileName": "done.h5",
+            "bytes": {"done.h5": {"bytes": 4}},
+        }
+        partial = MagicMock()
+        partial.properties = {
+            "url": "https://example.com/partial.h5",
+            "fileName": "partial.h5",
+            "bytes": {"partial.h5": {"bytes": 4}},
+        }
+        download_granules([done, partial], tmp_path)
+        urls = mock_asf.download_urls.call_args.kwargs["urls"]
+        assert urls == ["https://example.com/partial.h5"]
+        assert not (tmp_path / "partial.h5").exists()
+
+    @patch("nice_sar.io.download._get_asf_session")
+    @patch("nice_sar.io.download.asf_search")
+    def test_no_session_when_all_present(
+        self, mock_asf: MagicMock, mock_session: MagicMock, tmp_path: Path
+    ) -> None:
+        from nice_sar.io.download import download_granules
+
+        (tmp_path / "done.h5").write_bytes(b"1234")
+        done = MagicMock()
+        done.properties = {
+            "url": "https://example.com/done.h5",
+            "fileName": "done.h5",
+            "bytes": {"done.h5": {"bytes": 4}},
+        }
+        assert download_granules([done], tmp_path) == [tmp_path / "done.h5"]
+        mock_session.assert_not_called()
+        mock_asf.download_urls.assert_not_called()
+
 
 class TestGetAsfSession:
     """Tests for _get_asf_session()."""
 
     @patch("nice_sar.io.download.asf_search")
     @patch("nice_sar.io.download.earthaccess")
-    def test_creates_session_with_token(
-        self, mock_ea: MagicMock, mock_asf: MagicMock
-    ) -> None:
+    def test_creates_session_with_token(self, mock_ea: MagicMock, mock_asf: MagicMock) -> None:
         from nice_sar.io.download import _get_asf_session
 
         mock_auth = MagicMock()
@@ -109,9 +162,7 @@ class TestGetAsfSession:
 
     @patch("nice_sar.io.download.asf_search")
     @patch("nice_sar.io.download.earthaccess")
-    def test_raises_on_unauthenticated(
-        self, mock_ea: MagicMock, mock_asf: MagicMock
-    ) -> None:
+    def test_raises_on_unauthenticated(self, mock_ea: MagicMock, mock_asf: MagicMock) -> None:
         from nice_sar.io.download import _get_asf_session
 
         mock_auth = MagicMock()
