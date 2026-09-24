@@ -37,6 +37,11 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 OUT = select_cases.CASES_DIR
+# Cases that also get a variant with 20 m coherence chips (<case_id>_coh20.png):
+# the first case of each clearing category.
+COH20_VARIANT_CATEGORIES = ("dip_detected", "no_dip", "gradual_decline")
+HV_RANGE_DB = (-16.0, -6.0)  # forest about -10 dB, pasture about -12.5 dB
+COH_RANGE = (0.0, 0.8)
 
 CATEGORY_TEXT = {
     "dip_detected": (
@@ -136,21 +141,72 @@ def _segments(ax, pairs: data.PairStack, values, color, lw, alpha=1.0, ls="-"):
             )
 
 
-def plot_case(ds: data.Dataset, case, scenes: list[data.S2Scene]) -> None:
-    window = case.window(ds.grid.shape)
-    series = analysis.patch_series(ds, case.rows, case.cols)
-    pr, pc = case.rep_pixel
-    pixel = analysis.patch_series(ds, np.array([pr]), np.array([pc]))
-    forest = analysis.forest_reference(ds)
-    chips = _choose_chips(case, scenes, window)
+def _side(case, day: float) -> str | None:
+    """Whether a chip date is before or after the case's HV-dated event."""
+    if not np.isfinite(case.t0):
+        return None
+    return "before" if day <= case.t0 else "after"
 
-    fig = plt.figure(figsize=(12, 9.4))
-    gs = fig.add_gridspec(3, 4, height_ratios=[1.05, 1, 1])
-    chip_axes = [fig.add_subplot(gs[0, i]) for i in range(4)]
-    ax_b = fig.add_subplot(gs[1, :])
-    ax_c = fig.add_subplot(gs[2, :], sharex=ax_b)
 
-    # --- optical chips with case outline ------------------------------------------
+def _match_hv(ds: data.Dataset, case, chip_days: list[int]) -> list[int]:
+    """Index of the HV date nearest each chip date, on the same side of the event.
+
+    Dates are used at most once where possible, so four chips show four dates.
+    """
+    days = ds.hv.days
+    used: set[int] = set()
+    out = []
+    for day in chip_days:
+        side = _side(case, day)
+        ok = np.ones(len(days), bool)
+        if side == "before":
+            ok &= days <= case.t0
+        elif side == "after":
+            ok &= days >= case.t1
+        cand = np.flatnonzero(ok) if ok.any() else np.arange(len(days))
+        order = cand[np.argsort(np.abs(days[cand] - day))]
+        pick = next((i for i in order if i not in used), order[0])
+        used.add(int(pick))
+        out.append(int(pick))
+    return out
+
+
+def _match_pair(pairs: data.PairStack, case, chip_days: list[int]) -> list[int]:
+    """Index of the coherence pair closest to each chip date, same side of the event.
+
+    Distance is zero when the chip date falls inside the pair; ties go to the pair
+    whose midpoint is nearest. "Before" chips only get pairs that end by the start
+    of the HV bracket and "after" chips only pairs that start at or after its end,
+    so no chip shows a pair that spans the event.
+    """
+    used: set[int] = set()
+    out = []
+    for day in chip_days:
+        side = _side(case, day)
+        ok = np.ones(len(pairs.ref), bool)
+        if side == "before":
+            ok &= pairs.sec <= case.t0
+        elif side == "after":
+            ok &= pairs.ref >= case.t1
+        cand = np.flatnonzero(ok) if ok.any() else np.arange(len(pairs.ref))
+        gap = np.maximum(pairs.ref[cand] - day, 0) + np.maximum(day - pairs.sec[cand], 0)
+        mid = np.abs((pairs.ref[cand] + pairs.sec[cand]) / 2 - day)
+        order = cand[np.lexsort((mid, gap))]
+        pick = next((i for i in order if i not in used), order[0])
+        used.add(int(pick))
+        out.append(int(pick))
+    return out
+
+
+def _pair_label(ref: int, sec: int) -> str:
+    a, b = config.to_date(ref), config.to_date(sec)
+    if a.month == b.month:
+        return f"{a:%d}–{b:%d %b}"
+    return f"{a:%d %b}–{b:%d %b}"
+
+
+def _case_mask(case, window) -> np.ndarray:
+    """Case pixels as a 0/1 array on the 20 m window."""
     mask = np.zeros((window[0].stop - window[0].start, window[1].stop - window[1].start))
     inside = (
         (case.rows >= window[0].start)
@@ -159,15 +215,76 @@ def plot_case(ds: data.Dataset, case, scenes: list[data.S2Scene]) -> None:
         & (case.cols < window[1].stop)
     )
     mask[case.rows[inside] - window[0].start, case.cols[inside] - window[1].start] = 1
-    mask = np.kron(mask, np.ones((2, 2)))  # 20 m -> 10 m S2 grid
-    for ax, scene in zip(chip_axes, chips + [None] * (4 - len(chips)), strict=True):
-        style.image_axes(ax)
-        if scene is None:
-            ax.set_visible(False)
+    return mask
+
+
+def plot_case(ds: data.Dataset, case, scenes: list[data.S2Scene], coh_kind: str = "coh80") -> None:
+    """One case figure: chip rows (S2, HV, coherence) above two time-series panels."""
+    window = case.window(ds.grid.shape)
+    series = analysis.patch_series(ds, case.rows, case.cols)
+    pr, pc = case.rep_pixel
+    pixel = analysis.patch_series(ds, np.array([pr]), np.array([pc]))
+    forest = analysis.forest_reference(ds)
+    chips = _choose_chips(case, scenes, window)
+    chip_days = [s.day for s in chips]
+    coh_pairs: data.PairStack = getattr(ds, coh_kind)
+    hv_idx = _match_hv(ds, case, chip_days)
+    pair_idx = _match_pair(coh_pairs, case, chip_days)
+
+    fig = plt.figure(figsize=(12, 15))
+    gs = fig.add_gridspec(
+        5, 5, height_ratios=[1, 1, 1, 1.15, 1.15], width_ratios=[1, 1, 1, 1, 0.06]
+    )
+    rgb_axes = [fig.add_subplot(gs[0, i]) for i in range(4)]
+    hv_axes = [fig.add_subplot(gs[1, i]) for i in range(4)]
+    coh_axes = [fig.add_subplot(gs[2, i]) for i in range(4)]
+    ax_b = fig.add_subplot(gs[3, :4])
+    ax_c = fig.add_subplot(gs[4, :4], sharex=ax_b)
+
+    # --- chip rows: same window and zoom in all three rows ----------------------------
+    mask20 = _case_mask(case, window)
+    mask10 = np.kron(mask20, np.ones((2, 2)))  # 20 m -> 10 m S2 grid
+    hv_im = coh_im = None
+    for i in range(4):
+        for ax in (rgb_axes[i], hv_axes[i], coh_axes[i]):
+            style.image_axes(ax)
+        if i >= len(chips):
+            for ax in (rgb_axes[i], hv_axes[i], coh_axes[i]):
+                ax.set_visible(False)
             continue
-        ax.imshow(data.s2_rgb(scene, window), interpolation="nearest")
-        ax.contour(mask, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
-        ax.set_title(config.to_date(scene.day).strftime("%d %b %Y"), pad=3)
+        rgb_axes[i].imshow(data.s2_rgb(chips[i], window), interpolation="nearest")
+        rgb_axes[i].contour(mask10, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
+        rgb_axes[i].set_title(config.to_date(chips[i].day).strftime("%d %b %Y"), pad=3)
+
+        h = hv_idx[i]
+        hv_im = hv_axes[i].imshow(
+            ds.hv.values[h][window],
+            cmap="gray",
+            vmin=HV_RANGE_DB[0],
+            vmax=HV_RANGE_DB[1],
+            interpolation="nearest",
+        )
+        hv_axes[i].contour(mask20, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
+        hv_axes[i].set_title(config.to_date(ds.hv.days[h]).strftime("%d %b %Y"), pad=3)
+
+        p = pair_idx[i]
+        coh_im = coh_axes[i].imshow(
+            coh_pairs.values[p][window],
+            cmap="gray",
+            vmin=COH_RANGE[0],
+            vmax=COH_RANGE[1],
+            interpolation="nearest",
+        )
+        coh_axes[i].contour(mask20, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
+        coh_axes[i].set_title(_pair_label(coh_pairs.ref[p], coh_pairs.sec[p]), pad=3)
+
+    rgb_axes[0].set_ylabel("Sentinel-2")
+    hv_axes[0].set_ylabel("HV")
+    coh_axes[0].set_ylabel(f"Coherence {coh_kind[3:]} m")
+    fig.add_subplot(gs[0, 4]).set_visible(False)
+    if hv_im is not None:
+        fig.colorbar(hv_im, cax=fig.add_subplot(gs[1, 4]), label="dB")
+        fig.colorbar(coh_im, cax=fig.add_subplot(gs[2, 4]))
 
     # --- backscatter ---------------------------------------------------------------
     for pol, color in (("HH", style.HH), ("HV", style.HV)):
@@ -213,7 +330,8 @@ def plot_case(ds: data.Dataset, case, scenes: list[data.S2Scene]) -> None:
         ncol=3,
         loc="best",
     )
-    style.save(fig, OUT / case.category / f"{case.case_id}.png")
+    suffix = "" if coh_kind == "coh80" else "_coh20"
+    style.save(fig, OUT / case.category / f"{case.case_id}{suffix}.png")
 
 
 def write_readmes(cases) -> None:
@@ -249,6 +367,17 @@ def write_readmes(cases) -> None:
   horizontal seam can appear where two Sentinel-2 granules meet (each granule is
   atmospherically corrected separately). Two chips before
   and two after the HV-dated event (controls: spread over the series).
+- **HV chips** (second row): GCOV HV backscatter, gray scale -16 (black) to -6 dB
+  (white), on the same window as the Sentinel-2 chips. Each shows the dual-pol
+  date nearest the Sentinel-2 date above it, on the same side of the event.
+  Forest is about -10 dB and cleared land about -12.5 dB.
+- **Coherence chips** (third row): HH coherence, 0 (black) to 0.8 (white), for the
+  pair closest to the Sentinel-2 date (containing it where possible), again on the
+  same side of the event, so these chips never show the pair spanning the
+  clearing; that pair appears in the coherence time series. Titles give the pair
+  dates. The main figures use 80 m coherence (each 80 m cell appears as a 4 x 4
+  block of 20 m pixels); `<case>_coh20.png` repeats the figure with 20 m
+  coherence for the first case of each clearing category.
 - **Backscatter**: thick = case mean (averaged in linear power), thin = one
   representative pixel (HV step closest to the case median), dashed gray =
   stable-forest HV median for that date.
@@ -288,8 +417,15 @@ def main() -> None:
     ds = data.load()
     scenes = data.s2_scenes()
     cases = select_cases.read()
+    variants = {
+        next(c.case_id for c in cases if c.category == cat)
+        for cat in COH20_VARIANT_CATEGORIES
+        if any(c.category == cat for c in cases)
+    }
     for case in cases:
-        plot_case(ds, case, scenes)
+        plot_case(ds, case, scenes, "coh80")
+        if case.case_id in variants:
+            plot_case(ds, case, scenes, "coh20")
         logger.info("Wrote %s", case.case_id)
     write_readmes(cases)
     write_index_readme(cases)
