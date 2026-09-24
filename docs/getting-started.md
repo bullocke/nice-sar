@@ -41,16 +41,80 @@ else:
 Search for NISAR GCOV products over an area of interest:
 
 ```python
-from nice_sar.search import search_gcov
+from nice_sar.search import search_gcov, summarize_results
 
 results = search_gcov(
-    bbox=(-112.1, 40.5, -111.7, 40.9),  # Salt Lake City area
-    start="2024-12-01",
-    end="2025-01-01",
-    max_results=5,
+    bbox=(-63.5, -10.0, -62.5, -9.0),  # Rondônia, Brazil
+    start="2026-06-17",
+    end="2026-09-30",
+    max_results=20,
 )
-print(f"Found {len(results)} granules")
+for s in summarize_results(results):
+    print(s.maturity, s.crid, s.track, s.direction, s.frame, s.start, s.granule_id)
 ```
+
+### Data maturity: PROVISIONAL vs BETA
+
+ASF archives NISAR products in a separate collection for each data maturity, and
+every search function takes a `maturity` argument:
+
+| `maturity` | Collections | What it contains |
+|---|---|---|
+| `"provisional"` (default) | `NISAR_L2_GCOV_PROVISIONAL_V1`, ... | Calibrated, partially validated products (CRID `P05023`+). Forward processing from 2026-06-17, plus [supplemental frames](supplemental-frames.md) back to October 2025. |
+| `"beta"` | `NISAR_L2_GCOV_BETA_V1`, ... | Pre-calibration products from the February 2026 release (acquisitions October 2025 to January 2026, CRIDs `X05007`-`X05010`). |
+| `"validated"` | `NISAR_L2_GCOV_V1`, ... | Fully validated products; expected from the late-2026 reprocessing campaign. |
+| `"any"` | all of the above | Every maturity, labeled in the results. |
+
+```python
+from nice_sar.search import search_nisar, nisar_short_names
+
+beta = search_nisar("GCOV", bbox=aoi, maturity="beta")        # pre-calibration only
+both = search_nisar("GUNW", bbox=aoi, maturity="any")         # mixed, labeled
+series = search_nisar("GCOV", track=68, frame=93, direction="D")  # one frame
+
+nisar_short_names("GUNW", "provisional")  # ['NISAR_L2_GUNW_PROVISIONAL_V1']
+```
+
+`track`, `frame`, and `direction` filter on the NISAR CMR attributes, so they work
+with or without a bounding box. For granules already on disk,
+`parse_granule_name(path).maturity` infers maturity from the CRID in the file name.
+`search_earthdata(product_type=..., maturity=...)` accepts the same maturity values
+for `earthaccess` users.
+
+!!! warning "Mixing maturities"
+    Differences between BETA and PROVISIONAL products can come from changes in the
+    processing software rather than from the surface. Keep them in separate
+    analyses. Also note:
+
+    - There is a permanent instrument data gap from `2026-07-27T22:03:25Z` to
+      `2026-08-10T00:55:27Z`.
+    - PROVISIONAL polarimetric phase is not fully calibrated. For coherent GCOV
+      analysis, multiply `HVVH` by e<sup>+j59°</sup> and `HHHV`, `HHVV`, `VHVV` by
+      e<sup>-j59°</sup> (diagonal terms such as `HHHH` and `HVHV` are unaffected).
+    - Some frames alternate between dual-pol (`DHDH`) and single-pol (`SHSH`)
+      acquisitions. Check the polarization token in the granule name before
+      building an HV time series.
+
+    See the [PROVISIONAL known issues](nisar-docs/data-availability/provisional-known-issues.md)
+    for the full list.
+
+### From the command line
+
+```bash
+# Tabulate PROVISIONAL GUNW granules for one frame
+nice-sar search --product GUNW --track 68 --frame 93 --direction D
+
+# Compare maturities over an AOI (JSON output for scripting)
+nice-sar search --product GCOV --bbox=-63.5,-10,-62.5,-9 --maturity any --json
+
+# Download full HDF5 granules (skips files already downloaded)
+nice-sar download --product GCOV --bbox=-63.5,-10,-62.5,-9 \
+    --start 2026-06-18 --end 2026-06-19 --max-granules 1 -o NISAR_Data/GCOV
+```
+
+`scripts/examples/amazon_frontier_download.py` is a complete example. It selects
+early and late dry-season GCOV and GUNW granules over Rondônia, downloads them, and
+checks each file's track and frame.
 
 ## 3. Open and Read
 
@@ -145,11 +209,16 @@ A CLI interface is also available:
 
 ```bash
 nice-sar subset \
-    --bbox "-58.24,4.40,-58.06,4.57" \
+    --bbox=-58.24,4.40,-58.06,4.57 \
     --product GCOV \
+    --maturity provisional \
     --polarization HH --polarization HV \
     -o ./my_subset/
 ```
+
+Use `--bbox=...` (with `=`) when the first coordinate is negative, so the value is
+not mistaken for a flag. `subset` accepts the same `--maturity`, `--track`,
+`--frame`, and `--direction` filters as `search`.
 
 ## Next Steps
 

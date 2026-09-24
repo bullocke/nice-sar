@@ -49,6 +49,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Supplemental Frames: supplemental-frames.md
   - CHPC Guide: chpc-guide.md
   - Notebooks: notebooks.md
   - API Reference:

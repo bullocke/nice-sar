@@ -48,6 +48,28 @@ db = linear_to_db(ds.values)
 stretched = percentile_stretch(db)
 ```
 
+## Finding and downloading data
+
+Searches return calibrated **PROVISIONAL** products by default. Pass `maturity="beta"` for the February 2026 pre-calibration release, or `maturity="any"` for both:
+
+```python
+from nice_sar.search import search_nisar, summarize_results
+from nice_sar.io.download import download_granules
+
+results = search_nisar("GCOV", bbox=(-63.5, -10.0, -62.5, -9.0), start="2026-06-17")
+for s in summarize_results(results):
+    print(s.maturity, s.crid, s.track, s.frame, s.start)
+
+download_granules(results[:1], "NISAR_Data/GCOV")
+```
+
+```bash
+nice-sar search --product GUNW --bbox=-63.5,-10,-62.5,-9 --maturity any
+nice-sar download --product GCOV --track 68 --frame 93 --direction D --max-granules 2 -o NISAR_Data/GCOV
+```
+
+See [Getting Started](docs/getting-started.md#data-maturity-provisional-vs-beta) for the maturity levels and the [supplemental PROVISIONAL frames](docs/supplemental-frames.md), which extend back to October 2025.
+
 ## Project structure
 
 ```
