@@ -20,11 +20,11 @@ python scripts/caqueta/run_all.py
 
 | Step | Output in `local_examples/caqueta/` | What it shows |
 |---|---|---|
-| `select_cases.py` | `04_cases/cases.csv`, `cases.npz` | Rule-based choice of 18 case studies in 6 categories |
+| `select_cases.py` | `04_cases/cases.csv`, `cases.npz` | Rule-based choice of 18 case studies in 6 categories; clearing outlines from a Sentinel-2 NBR drop |
 | `fig01_site_overview.py` | `01_site/` | Sentinel-2 at the start and end of the series, RADD alert dates, case locations |
 | `fig02_event_aligned.py` | `02_event_aligned/` | All clearings stacked on their RADD date: HH, HV, and 80 m vs 20 m coherence |
 | `fig03_spanning_pair.py` | `03_spanning_pair/` | Pixel-level test: is the spanning pair lower than the pixel's own history? |
-| `fig04_case_studies.py` | `04_cases/<category>/` | Per case: optical chips, backscatter, and coherence time series |
+| `fig04_case_studies.py` | `04_cases/<category>/` | Per case: Sentinel-2, HV, and coherence chips; NBR, backscatter, and coherence-minus-forest time series with HV-drop and coherence-dip bands |
 
 Each output folder has its own README, generated with the numbers from that run, explaining the method and how to read the figures.
 
@@ -43,7 +43,8 @@ Each output folder has its own README, generated with the numbers from that run,
 2. **Date clearings from HV.** A single step fit to each pixel's HV series gives the pair of consecutive dual-pol dates (usually 24 days apart) that bracket the drop. It uses backscatter only, so the coherence test built on it is not circular. RADD alerts come a median of about 14 days after the end of the HV bracket.
 3. **Remove weather.** Rain and wind shift coherence across the whole scene, so each pair's stable-forest median coherence is subtracted.
 4. **Compare with the pixel's own history.** The lowest pair inside the bracket, relative to the mean of the pixel's pre-event pairs, is compared with a matched null built from the same pixel's pre-event pairs.
-5. **Estimator floor.** A fully decorrelated pair still reads about 0.08 at 80 m (112 looks) and 0.21 at 20 m (18 looks), because coherence estimated from few looks is biased high.
+5. **Case outlines and timing.** Each case clearing is outlined from a Sentinel-2 NBR drop around a RADD seed. Its coherence dip is the set of pairs more than 2σ below stable forest in the same pair, where σ is the spread of intact-forest areas of the same size. That gives three independent timings per clearing: optical (NBR), coherence, and HV.
+6. **Estimator floor.** A fully decorrelated pair still reads about 0.08 at 80 m (112 looks) and 0.21 at 20 m (18 looks), because coherence estimated from few looks is biased high.
 
 ## Data sources
 

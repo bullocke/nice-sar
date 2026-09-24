@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 
 import config
 import numpy as np
-from data import Dataset, DateStack, PairStack
+from data import Dataset, DateStack, PairStack, S2Stack
 from scipy import ndimage
 from scipy.special import gammaln
 from scipy.stats import mannwhitneyu
@@ -290,15 +290,19 @@ class Patch:
 
     case_id: str
     category: str
-    rows: np.ndarray  # pixel row indices
+    rows: np.ndarray  # pixel row indices of the clearing outline
     cols: np.ndarray  # pixel col indices
+    delineation: str  # "Sentinel-2", "RADD seed", or "control"
     t0: float  # HV bracket start (NaN for controls)
     t1: float
     radd_day: float
     hv_step_db: float
     hv_abrupt_frac: float
-    coh80_z: float  # in-bracket min vs own pre-event baseline, in pre-event SDs
-    coh80_diff: float  # same, in coherence units
+    coh_dip_start: float  # first day of flagged coherence-dip pairs (NaN if none)
+    coh_dip_end: float
+    coh80_min_delta: float  # lowest (case - forest) 80 m coherence near the event
+    coh80_min_sigma: float  # same, in units of forest noise for this area
+    noise_sd: float  # SD of (forest patch - forest median) for this area, 80 m
     rep_pixel: tuple[int, int]
 
     @property
@@ -313,15 +317,6 @@ class Patch:
     def center(self) -> tuple[int, int]:
         return int(np.round(self.rows.mean())), int(np.round(self.cols.mean()))
 
-    def window(self, min_size: int = 60, pad: int = 12) -> tuple[slice, slice]:
-        """Square NISAR-grid window around the patch (at least ``min_size`` px)."""
-        h = max(np.ptp(self.rows), np.ptp(self.cols)) + 2 * pad
-        size = max(min_size, h)
-        r, c = self.center
-        return slice(r - size // 2, r - size // 2 + size), slice(
-            c - size // 2, c - size // 2 + size
-        )
-
 
 def patch_series(ds: Dataset, rows: np.ndarray, cols: np.ndarray) -> dict[str, np.ndarray]:
     """Patch-mean time series (mean in linear power for backscatter)."""
@@ -335,13 +330,15 @@ def patch_series(ds: Dataset, rows: np.ndarray, cols: np.ndarray) -> dict[str, n
 
 
 _FOREST_CACHE: dict[int, dict[str, np.ndarray]] = {}
+_NOISE_CACHE: dict[tuple, float] = {}
 
 
 def forest_reference(ds: Dataset) -> dict[str, np.ndarray]:
     """Stable-forest median per date (HH, HV, dB) and per pair (coh20, coh80).
 
     Used to remove variation common to the whole scene (e.g. canopy moisture after
-    rain), and drawn as the gray reference in the figures.
+    rain; the 21 Dec - 2 Jan pair is low everywhere), and drawn as the reference
+    in the figures.
     """
     key = id(ds)
     if key not in _FOREST_CACHE:
@@ -353,63 +350,179 @@ def forest_reference(ds: Dataset) -> dict[str, np.ndarray]:
     return _FOREST_CACHE[key]
 
 
-def _patch_metrics(ds: Dataset, rows: np.ndarray, cols: np.ndarray) -> dict:
-    """Describe a patch from its own forest-normalized patch-mean series.
+def forest_noise_sd(ds: Dataset, n_px: int, kind: str = "coh80") -> float:
+    """Pair-to-pair noise of forest-normalized coherence for an area of ``n_px``.
 
-    - ``step``: largest mean(before) - mean(after) HV step over all splits (dB)
-    - ``t0``/``t1``: HV dates on either side of that split
-    - ``abrupt_frac``: share of the step carried by the single interval at the
-      split (1 = one-date drop; small = decline spread over several dates)
-    - ``z``: 80 m coherence, lowest pair inside [t0, t1] relative to the patch's
-      pre-event pairs, in units of their standard deviation (``diff`` is the
-      same quantity in coherence units)
+    Samples ``NOISE_SAMPLES`` random squares of about ``n_px`` pixels that lie
+    entirely in stable forest, computes each square's mean coherence minus the
+    stable-forest median for every pair, and returns the pooled standard
+    deviation. This is how much an intact-forest patch of this size wanders
+    around the forest reference by chance; it shrinks as the area grows.
     """
-    s = patch_series(ds, rows, cols)
-    ref = forest_reference(ds)
-    hv, days = s["HV"] - ref["HV"], ds.hv.days
+    side = max(2, int(round(np.sqrt(n_px))))
+    key = (id(ds), side, kind)
+    if key not in _NOISE_CACHE:
+        rng = np.random.default_rng(config.SEED)
+        fits = ndimage.binary_erosion(ds.masks["stable_forest"], structure=np.ones((side, side)))
+        ys, xs = np.nonzero(fits)
+        pick = rng.choice(len(ys), min(config.NOISE_SAMPLES, len(ys)), replace=False)
+        ref = forest_reference(ds)[kind]
+        vals = getattr(ds, kind).values
+        h = side // 2
+        deltas = [
+            np.nanmean(vals[:, y - h : y - h + side, x - h : x - h + side], axis=(1, 2)) - ref
+            for y, x in zip(ys[pick], xs[pick], strict=True)
+        ]
+        _NOISE_CACHE[key] = float(np.nanstd(np.stack(deltas)))
+    return _NOISE_CACHE[key]
+
+
+def hv_step(ds: Dataset, series: dict[str, np.ndarray]) -> dict:
+    """Single-step fit to the forest-normalized patch-mean HV series.
+
+    Returns ``step`` (mean before - mean after, dB), the HV dates ``t0``/``t1``
+    on either side of the best split, and ``abrupt_frac``: the share of the step
+    carried by the single interval at the split (1 = one-date drop; small =
+    decline spread over several dates).
+    """
+    hv = series["HV"] - forest_reference(ds)["HV"]
+    days = ds.hv.days
     k = config.HV_MIN_DATES_EACH_SIDE
-    steps = [(hv[: i + 1].mean() - hv[i + 1 :].mean(), i) for i in range(k - 1, len(hv) - k)]
-    step, i = max(steps)
-    t0, t1 = float(days[i]), float(days[i + 1])
-    abrupt_frac = float((hv[i] - hv[i + 1]) / step) if step > 0 else np.nan
-    pairs = ds.coh80
-    a = s["coh80"] - ref["coh80"]
-    pre = pairs.sec <= t0 - config.PRE_PAIR_BUFFER_D
-    ins = (pairs.ref >= t0) & (pairs.sec <= t1)
-    z = diff = np.nan
-    if pre.sum() >= config.MIN_PRE_PAIRS and ins.any():
-        diff = a[ins].min() - a[pre].mean()
-        z = diff / a[pre].std(ddof=1)
+    step, i = max((hv[: i + 1].mean() - hv[i + 1 :].mean(), i) for i in range(k - 1, len(hv) - k))
+    abrupt = float((hv[i] - hv[i + 1]) / step) if step > 0 else np.nan
     return {
-        "t0": t0,
-        "t1": t1,
+        "t0": float(days[i]),
+        "t1": float(days[i + 1]),
         "step": float(step),
-        "abrupt_frac": abrupt_frac,
-        "z": float(z),
-        "diff": float(diff),
+        "abrupt_frac": abrupt,
     }
 
 
-def select_cases(ds: Dataset) -> list[Patch]:
-    """Pick case-study patches in six categories with transparent, seeded rules.
+def coherence_dip(ds: Dataset, delta: np.ndarray, sigma: float, t0: float) -> dict:
+    """Find the pairs where coherence drops below forest noise around a clearing.
 
-    Candidate clearings are connected groups of core RADD-disturbed pixels whose
-    RADD alert falls between the same two consecutive HV dates (so each patch is
-    one event). Each candidate is then described by its own forest-normalized
-    patch-mean series (``_patch_metrics``). Patch-mean HV steps are smaller than
-    pixel steps (a patch mixes fully and partly cleared pixels), so patch
-    thresholds are lower than ``HV_STEP_MIN_DB``:
+    ``delta`` is the case's 80 m coherence minus the stable-forest median for the
+    same pair, so scene-wide weather effects are removed. The search runs from
+    ``DIP_SEARCH_BEFORE_D`` days before the HV bracket to the onset of the
+    post-clearing rise (the first of two consecutive pairs above +2 sigma).
+    Pairs below ``-DIP_SIGMA`` x sigma are flagged; their combined span is the
+    coherence-dip period. This timing is independent of RADD, and only loosely
+    tied to HV (through the search start), because coherence can drop before
+    HV, e.g. at felling, before the slash is burned.
+    """
+    pairs = ds.coh80
+    start = t0 - config.DIP_SEARCH_BEFORE_D
+    rise = np.inf
+    for i in range(len(delta) - 1):
+        if pairs.ref[i] >= start and delta[i] > 2 * sigma and delta[i + 1] > 2 * sigma:
+            rise = pairs.ref[i]
+            break
+    window = (pairs.sec > start) & (pairs.ref < rise)
+    if not window.any():
+        return {"start": np.nan, "end": np.nan, "min_delta": np.nan, "min_sigma": np.nan}
+    flagged = window & (delta < -config.DIP_SIGMA * sigma)
+    lowest = float(np.nanmin(delta[window]))
+    return {
+        "start": float(pairs.ref[flagged].min()) if flagged.any() else np.nan,
+        "end": float(pairs.sec[flagged].max()) if flagged.any() else np.nan,
+        "min_delta": lowest,
+        "min_sigma": lowest / sigma,
+    }
 
-    - ``dip_detected``: step >= PATCH_STEP_DB, abrupt, and z <= DIP_Z
-    - ``no_dip``: step >= PATCH_STEP_DB, abrupt, and z >= 0
-    - ``gradual_decline``: step >= PATCH_STEP_DB but not abrupt (the split
-      interval carries < GRADUAL_FRAC of the step), e.g. understory clearing
-      weeks before felling
-    - ``radd_only``: step < PATCH_NO_STEP_DB (RADD alert, little NISAR response)
-    - ``stable_forest`` and ``pre_series_pasture``: seeded 5 x 5 px (1 ha) controls
 
-    Within each category, patches are ranked by how strongly they express it and
-    must be 1-40 ha and at least 1 km from every other case.
+def delineate_clearing(
+    s2: S2Stack, rows: np.ndarray, cols: np.ndarray, t0: float, t1: float, shape
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Outline the whole clearing around a seed from a Sentinel-2 NBR drop.
+
+    RADD alerts fragment clearings (dates are patchy and lag), so the case
+    outline is taken from Sentinel-2 instead:
+
+    1. "before" = the last two usable images at least ``PRE_GAP_D`` days before
+       the HV bracket (so clearing that starts before the HV drop is included);
+       "after" = the first two usable images after the bracket. Usable means at
+       least 80% clear and haze-free around the seed.
+    2. A pixel is cleared if its NBR was forest-like before (max of the two
+       >= ``NBR_FOREST_MIN``), low after (min of the two <= ``NBR_CLEARED_MAX``),
+       and dropped by at least ``NBR_DROP_MIN``. Taking the max/min over two
+       dates bridges small cloud gaps.
+    3. Remove isolated pixels (morphological opening) and keep the 8-connected
+       regions touching the seed.
+
+    Returns global (rows, cols), or ``None`` if there are not enough usable
+    images or the outline is too small or too large.
+    """
+    pad = config.DELINEATE_PAD_PX
+    r0, r1 = max(rows.min() - pad, 0), min(rows.max() + pad + 1, shape[0])
+    c0, c1 = max(cols.min() - pad, 0), min(cols.max() + pad + 1, shape[1])
+    win = (slice(r0, r1), slice(c0, c1))
+    seed_win = (
+        slice(max(rows.min() - 10, 0), rows.max() + 11),
+        slice(max(cols.min() - 10, 0), cols.max() + 11),
+    )
+    usable = [t for t in range(len(s2.days)) if s2.usable(t, seed_win)]
+    pre = [t for t in usable if s2.days[t] <= t0 - config.PRE_GAP_D][-2:]
+    post = [t for t in usable if s2.days[t] >= t1][:2]
+    if not pre or not post:
+        return None
+    with np.errstate(all="ignore"):
+        before = np.nanmax(s2.nbr[pre][:, win[0], win[1]], axis=0)
+        after = np.nanmin(s2.nbr[post][:, win[0], win[1]], axis=0)
+    cleared = (
+        (before >= config.NBR_FOREST_MIN)
+        & (after <= config.NBR_CLEARED_MAX)
+        & (before - after >= config.NBR_DROP_MIN)
+    )
+    cleared = ndimage.binary_opening(cleared)
+    labels, _ = ndimage.label(cleared, structure=np.ones((3, 3)))
+    seed = np.zeros(cleared.shape, bool)
+    seed[rows - r0, cols - c0] = True
+    ids = np.unique(labels[ndimage.binary_dilation(seed)])
+    ids = ids[ids > 0]
+    obj = np.isin(labels, ids)
+    if not config.MIN_PATCH_PX <= obj.sum() <= config.MAX_OBJECT_PX:
+        return None
+    rr, cc = np.nonzero(obj)
+    return rr + r0, cc + c0
+
+
+def _describe(ds: Dataset, rows: np.ndarray, cols: np.ndarray, control: bool = False) -> dict:
+    """HV step, coherence dip, and noise level for a set of pixels."""
+    s = patch_series(ds, rows, cols)
+    m = hv_step(ds, s)
+    sigma = forest_noise_sd(ds, len(rows))
+    delta = s["coh80"] - forest_reference(ds)["coh80"]
+    dip = (
+        {"start": np.nan, "end": np.nan, "min_delta": np.nan, "min_sigma": np.nan}
+        if control
+        else coherence_dip(ds, delta, sigma, m["t0"])
+    )
+    return {**m, "sigma": sigma, "dip": dip}
+
+
+def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
+    """Pick case-study clearings and controls with transparent, seeded rules.
+
+    1. **Seeds**: connected groups of core RADD high-confidence pixels whose alert
+       falls between the same two consecutive HV dates.
+    2. **Outline**: each seed is grown to the whole clearing with
+       ``delineate_clearing`` (Sentinel-2 NBR drop); if that fails, the seed is
+       kept.
+    3. **Describe** the outline: forest-normalized HV step, coherence dip
+       (pairs below -``DIP_SIGMA`` x forest noise), and noise level.
+    4. **Categorize** (in this order):
+
+       - ``gradual_decline``: HV step >= PATCH_STEP_DB, no single interval
+         carrying >= GRADUAL_FRAC of it
+       - ``dip_detected``: HV step >= PATCH_STEP_DB and at least one flagged pair
+       - ``no_dip``: HV step >= PATCH_STEP_DB and no pair near the event below
+         -1 x forest noise
+       - ``radd_only``: HV step < PATCH_NO_STEP_DB
+       - ``stable_forest`` / ``pre_series_pasture``: seeded 1 ha controls
+
+    Within each category, Sentinel-2 outlines come first, then ranking by how
+    strongly the case expresses the category; cases are at least 1 km apart and
+    never overlap.
     """
     rng = np.random.default_rng(config.SEED)
     dist = ds.masks["disturbed"]
@@ -424,48 +537,58 @@ def select_cases(ds: Dataset) -> list[Patch]:
             rows, cols = np.nonzero(labels == lab)
             if not config.MIN_PATCH_PX <= len(rows) <= 1000:
                 continue
-            candidates.append((rows, cols, _patch_metrics(ds, rows, cols)))
-    logger.info("%d candidate clearings", len(candidates))
+            seed_m = hv_step(ds, patch_series(ds, rows, cols))
+            obj = delineate_clearing(s2, rows, cols, seed_m["t0"], seed_m["t1"], ds.grid.shape)
+            how = "Sentinel-2"
+            if obj is None:
+                obj, how = (rows, cols), "RADD seed"
+            candidates.append((obj[0], obj[1], how, _describe(ds, *obj)))
+    logger.info(
+        "%d candidate clearings (%d outlined from Sentinel-2)",
+        len(candidates),
+        sum(c[2] == "Sentinel-2" for c in candidates),
+    )
 
     def category(m: dict) -> str | None:
         big = m["step"] >= config.PATCH_STEP_DB
-        abrupt = m["abrupt_frac"] >= config.ABRUPT_FRAC
-        if big and abrupt and m["z"] <= config.DIP_Z:
-            return "dip_detected"
-        if big and abrupt and m["z"] >= 0:
-            return "no_dip"
         if big and m["abrupt_frac"] < config.GRADUAL_FRAC:
             return "gradual_decline"
+        if big and np.isfinite(m["dip"]["start"]):
+            return "dip_detected"
+        if big and m["dip"]["min_sigma"] > -1:
+            return "no_dip"
         if m["step"] < config.PATCH_NO_STEP_DB:
             return "radd_only"
         return None
 
     rank_key = {
-        # rank by coherence units, not z: z is unstable with only 4-5 pre pairs
-        "dip_detected": lambda m: m["diff"],
+        "dip_detected": lambda m: m["dip"]["min_sigma"],
         "no_dip": lambda m: -m["step"],
         "gradual_decline": lambda m: -m["step"],
         "radd_only": lambda m: m["step"],
     }
     chosen: list[Patch] = []
+    taken = np.zeros(ds.grid.shape, bool)
 
-    def far_enough(r: int, c: int) -> bool:
-        return all(
+    def available(rows: np.ndarray, cols: np.ndarray) -> bool:
+        r, c = rows.mean(), cols.mean()
+        far = all(
             np.hypot(r - p.center[0], c - p.center[1]) * config.PIXEL_M >= 1000 for p in chosen
         )
+        return far and not taken[rows, cols].any()
 
     for cat, key in rank_key.items():
-        pool = [c for c in candidates if category(c[2]) == cat]
-        pool.sort(key=lambda c: key(c[2]))
+        pool = [c for c in candidates if category(c[3]) == cat]
+        pool.sort(key=lambda c: (c[2] != "Sentinel-2", key(c[3])))
         k = 0
-        for rows, cols, m in pool:
+        for rows, cols, how, m in pool:
             if k == config.CASES_PER_CATEGORY:
                 break
-            r, c = int(rows.mean()), int(cols.mean())
-            if not far_enough(r, c):
+            if not available(rows, cols):
                 continue
             k += 1
-            chosen.append(_make_patch(ds, f"{cat}_{k}", cat, rows, cols, m))
+            chosen.append(_make_patch(ds, f"{cat}_{k}", cat, rows, cols, how, m))
+            taken[rows, cols] = True
         logger.info("%s: %d candidates, %d chosen", cat, len(pool), k)
 
     for cat, mask in (
@@ -478,52 +601,48 @@ def select_cases(ds: Dataset) -> list[Patch]:
         for j in rng.permutation(len(ys)):
             if k == config.CASES_PER_CATEGORY:
                 break
-            r, c = ys[j], xs[j]
-            if not far_enough(r, c):
-                continue
-            rr, cc = np.meshgrid(np.arange(r - 2, r + 3), np.arange(c - 2, c + 3), indexing="ij")
-            k += 1
-            chosen.append(
-                _make_patch(
-                    ds,
-                    f"{cat}_{k}",
-                    cat,
-                    rr.ravel(),
-                    cc.ravel(),
-                    _patch_metrics(ds, rr.ravel(), cc.ravel()),
-                    control=True,
-                )
+            rr, cc = np.meshgrid(
+                np.arange(ys[j] - 2, ys[j] + 3), np.arange(xs[j] - 2, xs[j] + 3), indexing="ij"
             )
+            rr, cc = rr.ravel(), cc.ravel()
+            if not available(rr, cc):
+                continue
+            k += 1
+            m = _describe(ds, rr, cc, control=True)
+            chosen.append(_make_patch(ds, f"{cat}_{k}", cat, rr, cc, "control", m, control=True))
+            taken[rr, cc] = True
     return chosen
 
 
 def _make_patch(
-    ds: Dataset, case_id: str, cat: str, rows, cols, m: dict, control: bool = False
+    ds: Dataset, case_id: str, cat: str, rows, cols, how: str, m: dict, control: bool = False
 ) -> Patch:
-    # representative pixel: HV step closest to the patch's (pixel-level, smoothed)
-    hv = smooth_db(
-        DateStack(
-            ds.hv.values[:, rows.min() : rows.max() + 1, cols.min() : cols.max() + 1], ds.hv.days
-        )
-    )
+    # representative pixel: HV step (3x3-smoothed) closest to the case median
+    sub = (slice(rows.min(), rows.max() + 1), slice(cols.min(), cols.max() + 1))
+    hv = smooth_db(DateStack(ds.hv.values[:, sub[0], sub[1]], ds.hv.days))
     i = int(np.searchsorted(ds.hv.days, m["t0"]))
     pix_step = hv[: i + 1].mean(0) - hv[i + 1 :].mean(0)
     vals = pix_step[rows - rows.min(), cols - cols.min()]
     j = int(np.nanargmin(np.abs(vals - np.nanmedian(vals))))
     radd = ds.radd.alert_date[rows, cols]
-    radd = radd[radd > -9999]
+    in_series = radd[radd >= ds.first_day]
+    radd = in_series if in_series.size else radd[radd > -9999]
     return Patch(
         case_id=case_id,
         category=cat,
         rows=rows,
         cols=cols,
+        delineation=how,
         t0=np.nan if control else m["t0"],
         t1=np.nan if control else m["t1"],
         radd_day=float(np.median(radd)) if radd.size else np.nan,
         hv_step_db=m["step"],
         hv_abrupt_frac=m["abrupt_frac"],
-        coh80_z=m["z"],
-        coh80_diff=m["diff"],
+        coh_dip_start=m["dip"]["start"],
+        coh_dip_end=m["dip"]["end"],
+        coh80_min_delta=m["dip"]["min_delta"],
+        coh80_min_sigma=m["dip"]["min_sigma"],
+        noise_sd=m["sigma"],
         rep_pixel=(int(rows[j]), int(cols[j])),
     )
 

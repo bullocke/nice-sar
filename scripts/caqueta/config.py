@@ -84,5 +84,19 @@ PATCH_STEP_DB = 1.5
 PATCH_NO_STEP_DB = 0.75
 ABRUPT_FRAC = 0.6  # >= 60% of the step happens between two consecutive HV dates
 GRADUAL_FRAC = 0.4  # < 40%: decline spread over several dates
-DIP_Z = -1.5  # lowest in-bracket 80 m coherence >= 1.5 pre-event SDs below baseline
+# Coherence dip: a pair is flagged when the case's 80 m coherence minus the
+# stable-forest median for the same pair is below -DIP_SIGMA x the forest noise
+# for an area of the case's size (see analysis.forest_noise_sd).
+DIP_SIGMA = 2.0
+DIP_SEARCH_BEFORE_D = 48  # start looking this many days before the HV bracket
+NOISE_SAMPLES = 150  # random forest squares used to estimate that noise
+
+# Clearing outlines from Sentinel-2 (analysis.delineate_clearing). NBR = (B8 - B12) /
+# (B8 + B12): intact forest here has a median of about 0.6, fresh clearings < 0.
+NBR_FOREST_MIN = 0.45
+NBR_CLEARED_MAX = 0.30
+NBR_DROP_MIN = 0.20
+PRE_GAP_D = 24  # "before" images at least 24 d before the HV bracket
+DELINEATE_PAD_PX = 60  # search this far (1.2 km) around the seed
+MAX_OBJECT_PX = 2500  # 100 ha; larger outlines are treated as merged clearings
 CASES_PER_CATEGORY = 3

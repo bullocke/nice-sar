@@ -294,3 +294,60 @@ def s2_usable(scene: S2Scene, window: tuple[slice, slice] | None = None) -> bool
             return False
         blue = src.read(names.index("B2") + 1, window=win)
     return float(np.median(blue[clear])) <= config.S2_MAX_BLUE
+
+
+@dataclass
+class S2Stack:
+    """All Sentinel-2 dates aggregated to the 20 m NISAR grid, held in memory.
+
+    ``nbr`` is the normalized burn ratio (B8 - B12) / (B8 + B12): about 0.6 for
+    intact forest here and below 0.3 for felled, burned, or bare ground, which
+    makes it a sharper clearing indicator than NDVI. Values are NaN where fewer
+    than half of the four 10 m pixels are clear.
+    """
+
+    days: np.ndarray  # (T,)
+    nbr: np.ndarray  # (T, H, W) float32
+    clear: np.ndarray  # (T, H, W) bool
+    blue: np.ndarray  # (T, H, W) float32, B2 reflectance x 10000
+
+    def usable(self, t: int, window: tuple[slice, slice] | None = None) -> bool:
+        """Clear and haze-free enough (see ``s2_usable``), evaluated at 20 m."""
+        w = window or (slice(None), slice(None))
+        clear = self.clear[t][w]
+        if clear.mean() < config.S2_MIN_CLEAR:
+            return False
+        return float(np.median(self.blue[t][w][clear])) <= config.S2_MAX_BLUE
+
+
+def _block_mean(a: np.ndarray) -> np.ndarray:
+    h, w = a.shape
+    return a[: h // 2 * 2, : w // 2 * 2].reshape(h // 2, 2, w // 2, 2).mean(axis=(1, 3))
+
+
+def load_s2_stack() -> S2Stack:
+    """Read every Sentinel-2 file once and aggregate to the 20 m grid."""
+    days, nbr, clear, blue = [], [], [], []
+    for scene in s2_scenes():
+        with rasterio.open(scene.path) as src:
+            names = list(src.descriptions)
+            b = {n: src.read(names.index(n) + 1).astype("float32") for n in ("B2", "B8", "B12")}
+            c = src.read(names.index("clear") + 1) > 0
+        with np.errstate(invalid="ignore", divide="ignore"):
+            v = (b["B8"] - b["B12"]) / (b["B8"] + b["B12"])
+        v[~c] = np.nan
+        frac = _block_mean(c.astype("float32"))
+        with np.errstate(invalid="ignore"):
+            n20 = np.nanmean(
+                v[: v.shape[0] // 2 * 2, : v.shape[1] // 2 * 2].reshape(
+                    v.shape[0] // 2, 2, v.shape[1] // 2, 2
+                ),
+                axis=(1, 3),
+            )
+        n20[frac < 0.5] = np.nan
+        days.append(scene.day)
+        nbr.append(n20.astype("float32"))
+        clear.append(frac >= 0.5)
+        blue.append(_block_mean(b["B2"]))
+    logger.info("Loaded %d Sentinel-2 dates onto the 20 m grid", len(days))
+    return S2Stack(np.array(days), np.stack(nbr), np.stack(clear), np.stack(blue))

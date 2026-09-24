@@ -42,10 +42,14 @@ FIELDS = [
     "hv_bracket_start",
     "hv_bracket_end",
     "radd_alert",
+    "delineation",
     "hv_step_db",
     "hv_abrupt_frac",
-    "coh80_z",
-    "coh80_diff",
+    "coh_dip_start",
+    "coh_dip_end",
+    "coh80_min_delta",
+    "coh80_min_sigma",
+    "noise_sd",
     "rep_row",
     "rep_col",
 ]
@@ -71,6 +75,26 @@ class CaseRecord:
     def t1(self) -> float:
         v = self.row["hv_bracket_end"]
         return config.to_day(v) if v else np.nan
+
+    @property
+    def dip_start(self) -> float:
+        v = self.row["coh_dip_start"]
+        return config.to_day(v) if v else np.nan
+
+    @property
+    def dip_end(self) -> float:
+        v = self.row["coh_dip_end"]
+        return config.to_day(v) if v else np.nan
+
+    @property
+    def event_start(self) -> float:
+        """Earliest of the HV bracket start and the coherence-dip start."""
+        return float(np.nanmin([self.t0, self.dip_start])) if np.isfinite(self.t0) else np.nan
+
+    @property
+    def event_end(self) -> float:
+        """Latest of the HV bracket end and the coherence-dip end."""
+        return float(np.nanmax([self.t1, self.dip_end])) if np.isfinite(self.t1) else np.nan
 
     @property
     def radd_day(self) -> float:
@@ -123,10 +147,14 @@ def write(cases: list[analysis.Patch], grid: data.Grid) -> None:
                     "hv_bracket_start": _fmt_day(p.t0),
                     "hv_bracket_end": _fmt_day(p.t1),
                     "radd_alert": _fmt_day(p.radd_day),
+                    "delineation": p.delineation,
                     "hv_step_db": round(p.hv_step_db, 2),
                     "hv_abrupt_frac": round(p.hv_abrupt_frac, 2),
-                    "coh80_z": round(p.coh80_z, 2),
-                    "coh80_diff": round(p.coh80_diff, 3),
+                    "coh_dip_start": _fmt_day(p.coh_dip_start),
+                    "coh_dip_end": _fmt_day(p.coh_dip_end),
+                    "coh80_min_delta": round(p.coh80_min_delta, 3),
+                    "coh80_min_sigma": round(p.coh80_min_sigma, 2),
+                    "noise_sd": round(p.noise_sd, 3),
                     "rep_row": p.rep_pixel[0],
                     "rep_col": p.rep_pixel[1],
                 }
@@ -149,7 +177,8 @@ def read() -> list[CaseRecord]:
 
 def main() -> None:
     ds = data.load()
-    write(analysis.select_cases(ds), ds.grid)
+    s2 = data.load_s2_stack()
+    write(analysis.select_cases(ds, s2), ds.grid)
 
 
 if __name__ == "__main__":
