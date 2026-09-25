@@ -834,3 +834,45 @@ def timing_sensitivity(
             }
         )
     return out
+
+
+def local_ring(ds: Dataset, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
+    """Surrounding intact forest: a ring from RING_INNER_PX to RING_OUTER_PX around the case.
+
+    The inner gap (one 80 m cell) keeps 80 m coherence cells that straddle the
+    outline out of the ring; RADD-alerted pixels and non-forest are excluded.
+    """
+    mask = np.zeros(ds.grid.shape, bool)
+    mask[rows, cols] = True
+    ring = ndimage.binary_dilation(mask, iterations=config.RING_OUTER_PX)
+    ring &= ~ndimage.binary_dilation(mask, iterations=config.RING_INNER_PX)
+    return ring & (ds.radd.alert_date <= -9999) & (ds.radd.forest == 1)
+
+
+def coherence_context(ds: Dataset, rows: np.ndarray, cols: np.ndarray, before_day: float) -> dict:
+    """Case vs surrounding-forest coherence before the disturbance and at its minimum.
+
+    For 80 m and 20 m: the mean case coherence over pairs ending on or before
+    ``before_day`` (and the same for the surrounding ring), and the pair with the
+    lowest case coherence, with the ring's value in that pair. Comparing with the
+    local ring shows whether the case is darker than nearby forest, independent of
+    scene-wide weather.
+    """
+    ring = local_ring(ds, rows, cols)
+    out = {}
+    for kind in ("coh80", "coh20"):
+        pairs: PairStack = getattr(ds, kind)
+        inside = np.nanmean(pairs.values[:, rows, cols], 1)
+        around = np.array([np.nanmean(v[ring]) if ring.any() else np.nan for v in pairs.values])
+        pre = pairs.sec <= before_day
+        i = int(np.nanargmin(inside))
+        out[kind] = {
+            "n_pre": int(pre.sum()),
+            "pre_inside": float(np.nanmean(inside[pre])) if pre.any() else np.nan,
+            "pre_ring": float(np.nanmean(around[pre])) if pre.any() else np.nan,
+            "min_inside": float(inside[i]),
+            "min_ring": float(around[i]),
+            "min_ref": int(pairs.ref[i]),
+            "min_sec": int(pairs.sec[i]),
+        }
+    return out

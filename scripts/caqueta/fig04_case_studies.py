@@ -463,6 +463,12 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
             "| Case | 80 m pairs spanning the optical clearing: forest coherence / case − forest |",
             "|---|---|",
         ]
+        context = [
+            "| Case | Before: pairs ending by (n) | 80 m before: case / ring | "
+            "20 m before: case / ring | 80 m minimum: case / ring (pair) | "
+            "20 m minimum: case / ring (pair) |",
+            "|---|---|--:|--:|---|---|",
+        ]
         for c in items:
             hv = f"{c.hv_bracket_start} to {c.hv_bracket_end}" if c.hv_bracket_start else "-"
             dips = (
@@ -474,6 +480,19 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
                 f"{opt} | {hv} | {c.radd_alert or '-'} | {c.hv_step_db} |"
             )
             timing.append(f"| {c.case_id} | {spanning_pairs_text(ds, c)} |")
+            before = c._day("optical_start") if c.optical_start else c.event_start
+            if np.isfinite(before):
+                ctx = analysis.coherence_context(ds, c.rows, c.cols, before)
+                a, b = ctx["coh80"], ctx["coh20"]
+                context.append(
+                    f"| {c.case_id} | {config.to_date(before)} ({a['n_pre']}) | "
+                    f"{a['pre_inside']:.2f} / {a['pre_ring']:.2f} | "
+                    f"{b['pre_inside']:.2f} / {b['pre_ring']:.2f} | "
+                    f"{a['min_inside']:.2f} / {a['min_ring']:.2f} "
+                    f"({_pair_label(a['min_ref'], a['min_sec'])}) | "
+                    f"{b['min_inside']:.2f} / {b['min_ring']:.2f} "
+                    f"({_pair_label(b['min_ref'], b['min_sec'])}) |"
+                )
         readme = f"""# {title}
 
 {text}
@@ -486,6 +505,19 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
 forest-like (>= {config.NBR_FOREST_MIN}) and the first later date it is cleared (<= {config.NBR_CLEARED_MAX}); "-" means the
 case never looks forested or never looks cleared on the usable dates (often a
 "RADD seed" outline, or clearing before the first usable image).
+
+## Coherence before and at its lowest, against surrounding forest
+
+{chr(10).join(context) if len(context) > 2 else "No event dates for this category."}
+
+"Case" is the mean coherence over the outline; "ring" is intact forest from
+{config.RING_INNER_PX * config.PIXEL_M:.0f} to {config.RING_OUTER_PX * config.PIXEL_M:.0f} m outside it (no RADD alerts; the {config.RING_INNER_PX * config.PIXEL_M:.0f} m gap keeps 80 m cells that
+straddle the outline out of the ring). "Before" averages the pairs ending on or
+before the last forest-like Sentinel-2 date (the start of the optical clearing),
+or the event start where there is no optical interval. "Minimum" is the pair with
+the lowest case coherence. Because rain is patchy, the surrounding ring is a
+better weather reference than the scene-wide forest median: a case can be much
+darker than nearby forest in a pair where the scene-wide median is also low.
 
 ## Does the clearing show up in the pair that spans it?
 

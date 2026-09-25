@@ -108,4 +108,7 @@ PRE_GAP_D = 24  # "before" images at least 24 d before the HV bracket
 DELINEATE_PAD_PX = 60  # search this far (1.2 km) around the seed
 MAX_OBJECT_PX = 2500  # 100 ha; larger outlines are treated as merged clearings
 CASES_PER_CATEGORY = 8
+# Surrounding-forest ring used to compare a case with nearby intact forest
+RING_INNER_PX = 4  # 80 m gap: one 80 m coherence cell
+RING_OUTER_PX = 15  # to 300 m from the outline
 CASE_MIN_SPACING_M = 500  # case centres at least this far apart (outlines never overlap)
