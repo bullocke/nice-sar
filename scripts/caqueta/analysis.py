@@ -644,21 +644,15 @@ def categorize(m: dict) -> str | None:
     return None
 
 
-def select_cases(ds: Dataset, s2: S2Stack, reference: str = "scene") -> list[Patch]:
-    """Pick case studies with transparent, seeded rules.
+def candidate_pool(
+    ds: Dataset, s2: S2Stack, reference: str = "scene"
+) -> list[tuple[np.ndarray, np.ndarray, str, dict]]:
+    """Every candidate case as ``(rows, cols, outline source, describe output)``.
 
-    1. **Seeds**: connected groups of core RADD high-confidence pixels whose alert
-       falls between the same two consecutive HV dates.
-    2. **Outline**: each seed is grown with ``delineate_clearing`` (Sentinel-2 NBR
-       drop); if that fails, the seed is kept.
-    3. **Describe** (``describe``) and **categorize** (``categorize``).
-    4. Within each category, Sentinel-2 outlines come first, then the strongest
-       examples (deepest dip in sigma, or largest HV step for no-dip categories);
-       case centres are at least ``CASE_MIN_SPACING_M`` apart and outlines never
-       overlap. Controls are seeded 1 ha squares of stable forest and of land
-       cleared before the series.
+    Seeds are connected groups of core RADD high-confidence pixels whose alert falls
+    between the same two consecutive HV dates, grown with ``delineate_clearing``
+    (outline source "Sentinel-2") or kept as they are ("RADD seed").
     """
-    rng = np.random.default_rng(config.SEED)
     dist = ds.masks["disturbed"]
     cleared = dist | (ds.radd.alert_date > -9999)
     core = ndimage.binary_erosion(cleared, iterations=1) & dist
@@ -684,6 +678,42 @@ def select_cases(ds: Dataset, s2: S2Stack, reference: str = "scene") -> list[Pat
         sum(c[2] == "Sentinel-2" for c in candidates),
     )
 
+    return candidates
+
+
+def select_cases(
+    ds: Dataset,
+    s2: S2Stack,
+    reference: str = "scene",
+    per_category: dict[str, int] | None = None,
+    categories: tuple[str, ...] | None = None,
+) -> list[Patch]:
+    """Pick case studies with transparent, seeded rules.
+
+    1. **Seeds**: connected groups of core RADD high-confidence pixels whose alert
+       falls between the same two consecutive HV dates.
+    2. **Outline**: each seed is grown with ``delineate_clearing`` (Sentinel-2 NBR
+       drop); if that fails, the seed is kept.
+    3. **Describe** (``describe``) and **categorize** (``categorize``).
+    4. Within each category, Sentinel-2 outlines come first, then the strongest
+       examples (deepest dip in sigma, or largest HV step for no-dip categories);
+       case centres are at least ``CASE_MIN_SPACING_M`` apart and outlines never
+       overlap. Controls are seeded 1 ha squares of stable forest and of land
+       cleared before the series.
+
+    ``per_category`` overrides ``CASES_PER_CATEGORY`` for the named categories, and
+    ``categories`` restricts the output to those categories (controls included
+    only if named). Categories are filled in a fixed order, so asking for more
+    cases of the first category leaves its first ``CASES_PER_CATEGORY`` unchanged.
+    """
+    per_category = per_category or {}
+
+    def wanted(cat: str) -> bool:
+        return categories is None or cat in categories
+
+    rng = np.random.default_rng(config.SEED)
+    candidates = candidate_pool(ds, s2, reference)
+
     def strength(m: dict, cat: str) -> float:
         if cat in ("clearing_in_low_coherence_pair", "clearing_without_dip"):
             return -m["hv"]["step"]
@@ -703,11 +733,14 @@ def select_cases(ds: Dataset, s2: S2Stack, reference: str = "scene") -> list[Pat
         return far and not taken[rows, cols].any()
 
     for cat in CATEGORY_ORDER:
+        if not wanted(cat):
+            continue
+        n_max = per_category.get(cat, config.CASES_PER_CATEGORY)
         pool = [c for c in candidates if categorize(c[3]) == cat]
         pool.sort(key=lambda c: (c[2] != "Sentinel-2", strength(c[3], cat)))
         k = 0
         for rows, cols, how, m in pool:
-            if k == config.CASES_PER_CATEGORY:
+            if k == n_max:
                 break
             if not available(rows, cols):
                 continue
@@ -720,6 +753,8 @@ def select_cases(ds: Dataset, s2: S2Stack, reference: str = "scene") -> list[Pat
         ("stable_forest", ds.masks["stable_forest"]),
         ("pre_series_pasture", ds.masks["pre_series_pasture"]),
     ):
+        if not wanted(cat):
+            continue
         full = ndimage.binary_erosion(mask, structure=np.ones((5, 5)))
         ys, xs = np.nonzero(full)
         k = 0

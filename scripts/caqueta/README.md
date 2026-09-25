@@ -25,6 +25,7 @@ python scripts/caqueta/run_all.py
 | `fig02_event_aligned.py` | `02_event_aligned/` | All clearings stacked on their RADD date: HH, HV, and 80 m vs 20 m coherence |
 | `fig03_spanning_pair.py` | `03_spanning_pair/` | Pixel-level test: is the spanning pair lower than the pixel's own history? |
 | `fig04_case_studies.py` | `04_cases/<category>/` | Per case: Sentinel-2, HV, and coherence chips; NBR, backscatter, and coherence-minus-forest time series with HV-drop and coherence-dip bands |
+| `fig05_lab_examples.py` | `05_lab_examples/forest_clearing/` | Simplified forest-clearing figures (ring reference, 20 m coherence, 16 cases): first detection per sensor framed in the chips and marked in each time series. Not run by `run_all.py`. |
 
 Each output folder has its own README, generated with the numbers from that run, explaining the method and how to read the figures.
 

@@ -37,13 +37,16 @@ logger = logging.getLogger(__name__)
 CASES_DIR = config.OUT_DIR / "04_cases"
 
 
-def csv_path(reference: str) -> Path:
-    """Case list for one weather reference ("scene" or "ring")."""
-    return CASES_DIR / f"cases_forest_{reference}.csv"
+def csv_path(reference: str, suffix: str = "") -> Path:
+    """Case list for one weather reference ("scene" or "ring").
+
+    ``suffix`` names an alternative list (e.g. "_lab") kept next to the main one.
+    """
+    return CASES_DIR / f"cases_forest_{reference}{suffix}.csv"
 
 
-def npz_path(reference: str) -> Path:
-    return CASES_DIR / f"cases_forest_{reference}.npz"
+def npz_path(reference: str, suffix: str = "") -> Path:
+    return CASES_DIR / f"cases_forest_{reference}{suffix}.npz"
 
 
 FIELDS = [
@@ -147,11 +150,11 @@ def _fmt_day(day: float) -> str:
     return "" if not np.isfinite(day) else config.to_date(day).isoformat()
 
 
-def write(cases: list[analysis.Patch], grid: data.Grid, reference: str) -> None:
+def write(cases: list[analysis.Patch], grid: data.Grid, reference: str, suffix: str = "") -> None:
     CASES_DIR.mkdir(parents=True, exist_ok=True)
     to_ll = Transformer.from_crs(grid.crs, "EPSG:4326", always_xy=True)
     arrays = {}
-    with csv_path(reference).open("w", newline="") as f:
+    with csv_path(reference, suffix).open("w", newline="") as f:
         w = csv.DictWriter(f, FIELDS)
         w.writeheader()
         for n, p in enumerate(cases, start=1):
@@ -187,14 +190,14 @@ def write(cases: list[analysis.Patch], grid: data.Grid, reference: str) -> None:
             )
             arrays[f"{p.case_id}_rows"] = p.rows
             arrays[f"{p.case_id}_cols"] = p.cols
-    np.savez_compressed(npz_path(reference), **arrays)
-    logger.info("Wrote %s (%d cases)", csv_path(reference), len(cases))
+    np.savez_compressed(npz_path(reference, suffix), **arrays)
+    logger.info("Wrote %s (%d cases)", csv_path(reference, suffix), len(cases))
 
 
-def read(reference: str = "ring") -> list[CaseRecord]:
+def read(reference: str = "ring", suffix: str = "") -> list[CaseRecord]:
     """Load the saved cases for one weather reference (run this script first)."""
-    arrays = np.load(npz_path(reference))
-    with csv_path(reference).open() as f:
+    arrays = np.load(npz_path(reference, suffix))
+    with csv_path(reference, suffix).open() as f:
         return [
             CaseRecord(row, arrays[f"{row['case_id']}_rows"], arrays[f"{row['case_id']}_cols"])
             for row in csv.DictReader(f)
