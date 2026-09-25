@@ -158,10 +158,18 @@ def _choose_chips(case, s2: data.S2Stack, window) -> list[int]:
     return [usable[i] for i in sorted(set(idx))]
 
 
-def _segments(ax, pairs: data.PairStack, values, color, lw, alpha=1.0):
+def _segments(ax, pairs: data.PairStack, values, color, lw, alpha=1.0, ls="-"):
     for r, s, v in zip(pairs.ref, pairs.sec, values, strict=True):
         if np.isfinite(v):
-            ax.plot(_dates([r, s]), [v, v], color=color, lw=lw, alpha=alpha, solid_capstyle="butt")
+            ax.plot(
+                _dates([r, s]),
+                [v, v],
+                color=color,
+                lw=lw,
+                alpha=alpha,
+                ls=ls,
+                solid_capstyle="butt",
+            )
 
 
 def _side(case, day: float) -> str | None:
@@ -380,6 +388,13 @@ def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80")
     sigma = float(case.noise_sd)
     ax_c.axhspan(-2 * sigma, 2 * sigma, color=style.GRID, lw=0, zorder=0)
     ax_c.axhline(0, color=style.FOREST_REF, lw=1.5)
+    # Dip threshold per pair: the case's own recent level (median of the previous
+    # pairs) minus DIP_SIGMA x the forest change noise for this area.
+    delta80 = series["coh80"] - forest["coh80"]
+    threshold = (
+        delta80 - analysis.own_history_change(delta80) - config.DIP_SIGMA * float(case.change_sd)
+    )
+    _segments(ax_c, ds.coh80, threshold, style.INK_2, 1.2, ls="--")
     _segments(ax_c, ds.coh20, series["coh20"] - forest["coh20"], style.COH20, 3)
     _segments(ax_c, ds.coh80, series["coh80"] - forest["coh80"], style.COH80, 3)
     _segments(ax_c, ds.coh80, pixel["coh80"] - forest["coh80"], style.COH80, 1, alpha=0.7)
@@ -423,9 +438,10 @@ def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80")
         handles=[
             Line2D([], [], color=style.COH80, lw=3, label="80 m"),
             Line2D([], [], color=style.COH20, lw=3, label="20 m"),
-            LegendPatch(color=style.GRID, label="±2σ forest"),
+            LegendPatch(color=style.GRID, label="±2σ forest level"),
+            Line2D([], [], color=style.INK_2, lw=1.2, ls="--", label="Dip threshold"),
         ],
-        ncol=3,
+        ncol=4,
         loc="upper left",
     )
     suffix = "" if coh_kind == "coh80" else "_coh20"
@@ -509,7 +525,12 @@ left and the drop stays within forest noise.
   pixel, dashed = stable-forest HV median.
 - **Coherence − forest**: each pair is a segment from its first to its second date,
   showing the case's coherence minus the stable-forest median for the **same
-  pair**. This removes changes that affect the whole scene: the 21 Dec - 2 Jan pair,
+  pair**. Dashed segments are the dip threshold for each pair: the case's own
+  recent level (median of its previous {config.CHANGE_BASELINE_PAIRS} pairs) minus {config.DIP_SIGMA:g} sigma of the
+  change noise for intact-forest areas of the case's size; a green segment below
+  its dashed segment is a flagged dip. The gray band is different: +/-2 sigma of
+  the *level* (case minus forest) for intact forest, i.e. how far an intact area
+  normally sits from the forest line; values well above it indicate non-forest. This removes changes that affect the whole scene: the 21 Dec - 2 Jan pair,
   for example, is low everywhere (forest 0.17 against 0.25-0.52 in neighbouring
   pairs), most likely weather, and does not indicate disturbance. Green = 80 m,
   violet = 20 m (case mean), thin green = one pixel at 80 m. The gray band is
@@ -520,7 +541,7 @@ left and the drop stays within forest noise.
   fitted HV step); green hatching = each flagged coherence dip: a pair whose 80 m
   coherence (minus forest, to remove weather) is more than {config.DIP_SIGMA:g} sigma below the
   median of the case's previous {config.CHANGE_BASELINE_PAIRS} pairs. Sigma is the spread of the same quantity
-  for intact-forest areas of the case's size; at {config.DIP_SIGMA:g} sigma, about 1-2% of intact
+  for intact-forest areas of the case's size; at {config.DIP_SIGMA:g} sigma, {config.DIP_FALSE_RATE} of intact
   forest areas show any flagged dip over the whole series. **Dotted line**: median in-series RADD alert date for the case (RADD
   lags the NISAR HV drop by about two weeks on average).
 

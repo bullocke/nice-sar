@@ -87,10 +87,12 @@ PATCH_NO_STEP_DB = 0.75
 # CHANGE_BASELINE_PAIRS pairs. A pair is flagged when this change is below
 # -DIP_SIGMA x the same quantity's spread for intact-forest areas of the case's size.
 CHANGE_BASELINE_PAIRS = 3
-# 3 sigma: with ~18 testable pairs per series, a 2 sigma threshold flags at least one
-# false dip in 19-25% of intact-forest areas; 3 sigma brings this to about 1-2%
-# (calibrated on 600 random stable-forest squares of 1, 10, and 24 ha).
-DIP_SIGMA = 3.0
+# With ~18 testable pairs per series, the share of intact-forest areas showing at
+# least one false dip anywhere in the series is 19-25% at 2 sigma, about 5% at
+# 2.5 sigma, and about 1-2% at 3 sigma (calibrated on 600 random stable-forest
+# squares of 1, 10, and 24 ha).
+DIP_SIGMA = 2.5
+DIP_FALSE_RATE = "about 5%"  # share of intact-forest areas with any false dip
 # A clearing can only produce a dip if the forest was coherent in the pair spanning
 # it; below this forest coherence the pair is treated as masked (e.g. 0.17 in the
 # rainy 21 Dec - 2 Jan pair, close to the 80 m estimator floor of ~0.08).
@@ -105,4 +107,5 @@ NBR_DROP_MIN = 0.20
 PRE_GAP_D = 24  # "before" images at least 24 d before the HV bracket
 DELINEATE_PAD_PX = 60  # search this far (1.2 km) around the seed
 MAX_OBJECT_PX = 2500  # 100 ha; larger outlines are treated as merged clearings
-CASES_PER_CATEGORY = 3
+CASES_PER_CATEGORY = 8
+CASE_MIN_SPACING_M = 500  # case centres at least this far apart (outlines never overlap)

@@ -645,8 +645,9 @@ def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
     3. **Describe** (``describe``) and **categorize** (``categorize``).
     4. Within each category, Sentinel-2 outlines come first, then the strongest
        examples (deepest dip in sigma, or largest HV step for no-dip categories);
-       cases are at least 1 km apart and never overlap. Controls are seeded 1 ha
-       squares of stable forest and of land cleared before the series.
+       case centres are at least ``CASE_MIN_SPACING_M`` apart and outlines never
+       overlap. Controls are seeded 1 ha squares of stable forest and of land
+       cleared before the series.
     """
     rng = np.random.default_rng(config.SEED)
     dist = ds.masks["disturbed"]
@@ -686,7 +687,8 @@ def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
     def available(rows: np.ndarray, cols: np.ndarray) -> bool:
         r, c = rows.mean(), cols.mean()
         far = all(
-            np.hypot(r - p.center[0], c - p.center[1]) * config.PIXEL_M >= 1000 for p in chosen
+            np.hypot(r - p.center[0], c - p.center[1]) * config.PIXEL_M >= config.CASE_MIN_SPACING_M
+            for p in chosen
         )
         return far and not taken[rows, cols].any()
 

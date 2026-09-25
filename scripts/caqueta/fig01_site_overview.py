@@ -63,18 +63,6 @@ def main() -> None:
     im = ax.imshow(
         during, cmap=DATE_CMAP, vmin=ds.first_day, vmax=ds.last_day, interpolation="nearest"
     )
-    for c in cases:
-        r, col = c.rows.mean(), c.cols.mean()
-        ax.text(
-            col,
-            r,
-            c.number,
-            fontsize=12,
-            ha="center",
-            va="center",
-            color=style.INK,
-            bbox={"boxstyle": "circle,pad=0.2", "fc": "white", "ec": style.INK_2, "lw": 1},
-        )
     ax.set_title("RADD alert date")
     for a in axes:
         style.image_axes(a)
@@ -88,6 +76,29 @@ def main() -> None:
     cb.ax.set_yticklabels([config.to_date(t).strftime("%b %Y") for t in ticks])
     style.save(fig, OUT / "overview.png")
 
+    # Case locations on a larger map so the numbers stay readable
+    fig, ax = plt.subplots(figsize=(14, 11.5))
+    ax.set_facecolor("white")
+    ax.imshow(before, cmap=ListedColormap(["#d9d8d4"]), interpolation="nearest")
+    im = ax.imshow(
+        during, cmap=DATE_CMAP, vmin=ds.first_day, vmax=ds.last_day, interpolation="nearest"
+    )
+    for c in cases:
+        ax.text(
+            c.cols.mean(),
+            c.rows.mean(),
+            c.number,
+            fontsize=12,
+            ha="center",
+            va="center",
+            color=style.INK,
+            bbox={"boxstyle": "circle,pad=0.15", "fc": "white", "ec": style.INK_2, "lw": 1},
+        )
+    style.image_axes(ax)
+    cb = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.01, ticks=ticks)
+    cb.ax.set_yticklabels([config.to_date(t).strftime("%b %Y") for t in ticks])
+    style.save(fig, OUT / "case_locations.png")
+
     lines = [
         "# Site overview",
         "",
@@ -100,8 +111,10 @@ def main() -> None:
         f"- **Middle**: Sentinel-2 {config.to_date(late.day)} (clearest image near the end).",
         "- **Right**: RADD alert date. Blue = alerts during the NISAR series "
         f"({config.to_date(ds.first_day)} to {config.to_date(ds.last_day)}), light to dark by date; "
-        "gray = alerts before the series (already cleared land). Numbers mark the case "
-        "studies in `../04_cases/`:",
+        "gray = alerts before the series (already cleared land).",
+        "",
+        "`case_locations.png` repeats the RADD map at a larger size with the case "
+        "studies in `../04_cases/` numbered:",
         "",
         "| # | Case |",
         "|--:|---|",
