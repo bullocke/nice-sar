@@ -62,6 +62,9 @@ viz = [
     "holoviews>=1.18",
     "datashader>=0.16",
 ]
+accel = [
+    "numba>=0.59",
+]
 dev = [
     "nice-sar[test,docs,notebooks,viz]",
     "pre-commit>=3.6",
