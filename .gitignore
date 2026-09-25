@@ -116,3 +116,7 @@ local_examples/
 
 # Local-only Disturbance Index side project (code, overrides, outputs)
 local_di/
+
+# Files written by the tutorials
+notebooks/outputs/
+.cache/mkdocs-jupyter/

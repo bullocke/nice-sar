@@ -24,6 +24,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[docs]"
+      - name: Check that tutorials are executed and docs figures are current
+        run: python scripts/docs/check_notebooks.py
       - run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
