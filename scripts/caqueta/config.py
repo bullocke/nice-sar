@@ -91,8 +91,15 @@ CHANGE_BASELINE_PAIRS = 3
 # least one false dip anywhere in the series is 19-25% at 2 sigma, about 5% at
 # 2.5 sigma, and about 1-2% at 3 sigma (calibrated on 600 random stable-forest
 # squares of 1, 10, and 24 ha).
-DIP_SIGMA = 2.5
-DIP_FALSE_RATE = "about 5%"  # share of intact-forest areas with any false dip
+# Thresholds per weather reference ("scene": stable-forest median over the AOI;
+# "ring": intact forest 80-300 m around the case). The ring reference has 2-3x
+# lower noise but heavier tails relative to its sigma, so it needs a higher
+# multiplier for a similar false-dip rate (share of intact-forest areas showing
+# any flagged dip over the series: scene 2.5 sigma -> 3-8%; ring 3.0 sigma -> 4-8%;
+# ring 2.5 sigma would give 11-15%).
+DIP_SIGMA = {"scene": 2.5, "ring": 3.0}
+DIP_FALSE_RATE = {"scene": "3-8%", "ring": "4-8%"}
+REFERENCES = ("scene", "ring")
 # A clearing can only produce a dip if the forest was coherent in the pair spanning
 # it; below this forest coherence the pair is treated as masked (e.g. 0.17 in the
 # rainy 21 Dec - 2 Jan pair, close to the 80 m estimator floor of ~0.08).
@@ -111,4 +118,5 @@ CASES_PER_CATEGORY = 8
 # Surrounding-forest ring used to compare a case with nearby intact forest
 RING_INNER_PX = 4  # 80 m gap: one 80 m coherence cell
 RING_OUTER_PX = 15  # to 300 m from the outline
+RING_MIN_PX = 50  # below this, fall back to the scene reference
 CASE_MIN_SPACING_M = 500  # case centres at least this far apart (outlines never overlap)

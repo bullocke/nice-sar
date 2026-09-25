@@ -3,21 +3,26 @@
 
 Runs ``analysis.select_cases`` and writes:
 
-- ``local_examples/caqueta/04_cases/cases.csv``: one row per case with its
-  category, location, HV-dated bracket, RADD date, and the metrics used to
-  categorize it
-- ``local_examples/caqueta/04_cases/cases.npz``: the pixel rows/cols of each case,
-  so every figure uses exactly the same pixels
+- ``local_examples/caqueta/04_cases/cases_forest_<reference>.csv``: one row per
+  case with its category, location, timing, and the metrics used to categorize it
+- ``local_examples/caqueta/04_cases/cases_forest_<reference>.npz``: the pixel
+  rows/cols of each case, so every figure uses exactly the same pixels
+
+``<reference>`` is the weather reference used for coherence dips: ``scene``
+(stable-forest median over the AOI) or ``ring`` (intact forest around each case).
 
 Usage:
-    python scripts/caqueta/select_cases.py
+    python scripts/caqueta/select_cases.py                 # both references
+    python scripts/caqueta/select_cases.py --reference ring
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import analysis
 import config
@@ -30,8 +35,17 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 CASES_DIR = config.OUT_DIR / "04_cases"
-CSV_PATH = CASES_DIR / "cases.csv"
-NPZ_PATH = CASES_DIR / "cases.npz"
+
+
+def csv_path(reference: str) -> Path:
+    """Case list for one weather reference ("scene" or "ring")."""
+    return CASES_DIR / f"cases_forest_{reference}.csv"
+
+
+def npz_path(reference: str) -> Path:
+    return CASES_DIR / f"cases_forest_{reference}.npz"
+
+
 FIELDS = [
     "number",
     "case_id",
@@ -133,11 +147,11 @@ def _fmt_day(day: float) -> str:
     return "" if not np.isfinite(day) else config.to_date(day).isoformat()
 
 
-def write(cases: list[analysis.Patch], grid: data.Grid) -> None:
+def write(cases: list[analysis.Patch], grid: data.Grid, reference: str) -> None:
     CASES_DIR.mkdir(parents=True, exist_ok=True)
     to_ll = Transformer.from_crs(grid.crs, "EPSG:4326", always_xy=True)
     arrays = {}
-    with CSV_PATH.open("w", newline="") as f:
+    with csv_path(reference).open("w", newline="") as f:
         w = csv.DictWriter(f, FIELDS)
         w.writeheader()
         for n, p in enumerate(cases, start=1):
@@ -173,14 +187,14 @@ def write(cases: list[analysis.Patch], grid: data.Grid) -> None:
             )
             arrays[f"{p.case_id}_rows"] = p.rows
             arrays[f"{p.case_id}_cols"] = p.cols
-    np.savez_compressed(NPZ_PATH, **arrays)
-    logger.info("Wrote %s and %s (%d cases)", CSV_PATH, NPZ_PATH, len(cases))
+    np.savez_compressed(npz_path(reference), **arrays)
+    logger.info("Wrote %s (%d cases)", csv_path(reference), len(cases))
 
 
-def read() -> list[CaseRecord]:
-    """Load the saved cases (run this script first)."""
-    arrays = np.load(NPZ_PATH)
-    with CSV_PATH.open() as f:
+def read(reference: str = "ring") -> list[CaseRecord]:
+    """Load the saved cases for one weather reference (run this script first)."""
+    arrays = np.load(npz_path(reference))
+    with csv_path(reference).open() as f:
         return [
             CaseRecord(row, arrays[f"{row['case_id']}_rows"], arrays[f"{row['case_id']}_cols"])
             for row in csv.DictReader(f)
@@ -188,9 +202,19 @@ def read() -> list[CaseRecord]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--reference",
+        choices=config.REFERENCES,
+        nargs="+",
+        default=list(config.REFERENCES),
+        help="Weather reference(s): scene-wide forest median and/or local forest ring",
+    )
+    args = parser.parse_args()
     ds = data.load()
     s2 = data.load_s2_stack()
-    write(analysis.select_cases(ds, s2), ds.grid)
+    for reference in args.reference:
+        write(analysis.select_cases(ds, s2, reference), ds.grid, reference)
 
 
 if __name__ == "__main__":

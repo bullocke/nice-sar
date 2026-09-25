@@ -2,7 +2,7 @@
 """Case-study figures: image chips and time series for each clearing and control.
 
 For every case in ``cases.csv`` (see select_cases.py) this writes one PNG to
-``local_examples/caqueta/04_cases/<category>/<case_id>.png``:
+``local_examples/caqueta/04_cases/<category>/forest_<reference>/<case_id>.png``:
 
 - three chip rows on the same window and zoom: Sentinel-2 true colour, GCOV HV,
   and HH coherence, two dates before and two after the event
@@ -16,13 +16,19 @@ The first case of each clearing category also gets ``<case_id>_coh20.png`` with
 20 m coherence in the chip row. A README per category explains the selection
 rule and what to look for.
 
+Figures go to ``<category>/forest_<reference>/``: ``scene`` removes weather with the
+stable-forest median over the study area, ``ring`` with intact forest around each
+case.
+
 Usage:
-    python scripts/caqueta/fig04_case_studies.py
+    python scripts/caqueta/fig04_case_studies.py                 # both references
+    python scripts/caqueta/fig04_case_studies.py --reference ring
 """
 
 # ruff: noqa: E501  (long lines are Markdown in README templates)
 from __future__ import annotations
 
+import argparse
 import logging
 
 import analysis
@@ -51,14 +57,15 @@ HV_RANGE_DB = (-16.0, -6.0)  # forest about -10 dB, pasture about -12.5 dB
 COH_RANGE = (0.0, 0.8)
 DIP_HATCH = style.COH80  # coherence-dip period: green hatching over the HV band
 MIN_CHIP_GAP_D = 20  # the two "before" chips are at least this far apart
-REUSE_TOLERANCE_D = 12  # take an unused date/pair only if at most this much farther
+REUSE_TOLERANCE_D = 12
+CHIP_S2_TOLERANCE_D = 12  # S2 image may lie this far outside a chip's pair  # take an unused date/pair only if at most this much farther
 
 CATEGORY_TEXT = {
     "forest_clearing": (
         "Forest clearing with a coherence dip",
         "Forest before the event (case-mean Sentinel-2 NBR >= "
         f"{config.NBR_FOREST_MIN}), at least one 80 m coherence pair more than "
-        f"{config.DIP_SIGMA:g} sigma below the case's own recent level, and evidence of "
+        "DIP_SIGMA_X sigma below the case's own recent level, and evidence of "
         f"clearing (NBR drop to <= {config.NBR_CLEARED_MAX}, or an HV step >= "
         f"{config.PATCH_STEP_DB} dB). Ranked by the depth of the dip.\n\n"
         "What to look for: a large dip in the pair(s) spanning the felling (hatched), "
@@ -267,13 +274,13 @@ def nbr_series(ds: data.Dataset, s2: data.S2Stack, case, window) -> tuple:
     return days, vals, np.array(forest)
 
 
-def spanning_pairs_text(ds: data.Dataset, case) -> str:
+def spanning_pairs_text(ds: data.Dataset, case, reference: str) -> str:
     """80 m pairs overlapping the optical clearing: forest level and case - forest."""
     lo, hi = case._day("optical_start"), case._day("optical_end")
     if not np.isfinite(lo):
         return "-"
     pairs = ds.coh80
-    forest = analysis.forest_reference(ds)["coh80"]
+    forest = analysis.reference_series(ds, case.rows, case.cols, reference)["coh80"]
     series = analysis.patch_series(ds, case.rows, case.cols)["coh80"]
     parts = [
         f"{_pair_label(pairs.ref[p], pairs.sec[p])}: {forest[p]:.2f} / {series[p] - forest[p]:+.2f}"
@@ -299,18 +306,68 @@ def _bands(ax, case) -> None:
         ax.axvline(_dates(case.radd_day)[0], color=style.INK_2, lw=1.2, ls=":")
 
 
-def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80") -> None:
+def _nearest_hv(ds: data.Dataset, day: float) -> int:
+    return int(np.argmin(np.abs(ds.hv.days - day)))
+
+
+def _columns(ds: data.Dataset, s2: data.S2Stack, case, window, pairs: data.PairStack) -> list:
+    """Chip columns as dicts with ``s2`` (index or None), ``hv``, ``pair``, ``dip``.
+
+    With a flagged coherence dip, the columns follow the deepest dip: the pair
+    before it, the dip pair, the pair after it, and the last pair (post-
+    disturbance). Each column's Sentinel-2 image is the usable date inside that
+    pair nearest its midpoint (or within ``CHIP_S2_TOLERANCE_D`` of the pair),
+    and its HV date is the dual-pol date nearest that image (or the pair
+    midpoint). Without a dip, columns are chosen from Sentinel-2 dates around the
+    event as before.
+    """
+    if not case.dip_pairs:
+        chips = _choose_chips(case, s2, window)
+        days = [int(s2.days[t]) for t in chips]
+        hv = _match_hv(ds, case, days)
+        pr = _match_pair(pairs, case, days)
+        return [
+            {"s2": t, "hv": h, "pair": q, "dip": False}
+            for t, h, q in zip(chips, hv, pr, strict=True)
+        ]
+    ref, sec, _ = min(case.dip_pairs, key=lambda d: d[2])
+    d = int(np.flatnonzero((pairs.ref == ref) & (pairs.sec == sec))[0])
+    n = len(pairs.ref)
+    order = []
+    for q in (d - 1, d, d + 1, n - 1):
+        q = min(max(q, 0), n - 1)
+        if q not in order:
+            order.append(q)
+    usable = _usable_days(s2, window)
+    cols = []
+    for q in order:
+        r, e = pairs.ref[q], pairs.sec[q]
+        mid = (r + e) / 2
+        near = [
+            t for t in usable if r - CHIP_S2_TOLERANCE_D <= s2.days[t] <= e + CHIP_S2_TOLERANCE_D
+        ]
+        t = min(near, key=lambda t: abs(s2.days[t] - mid)) if near else None
+        hv = _nearest_hv(ds, s2.days[t] if t is not None else mid)
+        cols.append({"s2": t, "hv": hv, "pair": q, "dip": q == d})
+    return cols
+
+
+def plot_case(
+    ds: data.Dataset,
+    s2: data.S2Stack,
+    case,
+    coh_kind: str = "coh80",
+    reference: str = "ring",
+) -> None:
     """One case figure: chip rows (S2, HV, coherence) above three time-series panels."""
     window = case.window(ds.grid.shape)
     series = analysis.patch_series(ds, case.rows, case.cols)
     pr, pc = case.rep_pixel
     pixel = analysis.patch_series(ds, np.array([pr]), np.array([pc]))
     forest = analysis.forest_reference(ds)
-    chips = _choose_chips(case, s2, window)
-    chip_days = [int(s2.days[t]) for t in chips]
     coh_pairs: data.PairStack = getattr(ds, coh_kind)
-    hv_idx = _match_hv(ds, case, chip_days)
-    pair_idx = _match_pair(coh_pairs, case, chip_days)
+    columns = _columns(ds, s2, case, window, coh_pairs)
+    ref_coh = analysis.reference_series(ds, case.rows, case.cols, reference)
     scenes = {s.day: s for s in data.s2_scenes()}
 
     fig = plt.figure(figsize=(12, 17.5))
@@ -331,15 +388,20 @@ def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80")
     for i in range(4):
         for ax in (rgb_axes[i], hv_axes[i], coh_axes[i]):
             style.image_axes(ax)
-        if i >= len(chips):
+        if i >= len(columns):
             for ax in (rgb_axes[i], hv_axes[i], coh_axes[i]):
                 ax.set_visible(False)
             continue
-        rgb_axes[i].imshow(data.s2_rgb(scenes[chip_days[i]], window), interpolation="nearest")
-        rgb_axes[i].contour(mask10, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
-        rgb_axes[i].set_title(config.to_date(chip_days[i]).strftime("%d %b %Y"), pad=3)
+        col = columns[i]
+        if col["s2"] is not None:
+            day = int(s2.days[col["s2"]])
+            rgb_axes[i].imshow(data.s2_rgb(scenes[day], window), interpolation="nearest")
+            rgb_axes[i].contour(mask10, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
+            rgb_axes[i].set_title(config.to_date(day).strftime("%d %b %Y"), pad=3)
+        else:
+            rgb_axes[i].set_title("no clear image", pad=3, color=style.INK_2)
 
-        h = hv_idx[i]
+        h = col["hv"]
         hv_im = hv_axes[i].imshow(
             ds.hv.values[h][window],
             cmap="gray",
@@ -350,16 +412,22 @@ def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80")
         hv_axes[i].contour(mask20, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
         hv_axes[i].set_title(config.to_date(ds.hv.days[h]).strftime("%d %b %Y"), pad=3)
 
-        p = pair_idx[i]
+        q = col["pair"]
         coh_im = coh_axes[i].imshow(
-            coh_pairs.values[p][window],
+            coh_pairs.values[q][window],
             cmap="gray",
             vmin=COH_RANGE[0],
             vmax=COH_RANGE[1],
             interpolation="nearest",
         )
         coh_axes[i].contour(mask20, levels=[0.5], colors=style.OUTLINE, linewidths=1.5)
-        coh_axes[i].set_title(_pair_label(coh_pairs.ref[p], coh_pairs.sec[p]), pad=3)
+        coh_axes[i].set_title(_pair_label(coh_pairs.ref[q], coh_pairs.sec[q]), pad=3)
+        if col["dip"]:
+            # frame the dip pair in the colour of the hatched dip band
+            for spine in coh_axes[i].spines.values():
+                spine.set_visible(True)
+                spine.set_color(DIP_HATCH)
+                spine.set_linewidth(4)
 
     rgb_axes[0].set_ylabel("Sentinel-2")
     hv_axes[0].set_ylabel("HV")
@@ -390,15 +458,17 @@ def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80")
     ax_c.axhline(0, color=style.FOREST_REF, lw=1.5)
     # Dip threshold per pair: the case's own recent level (median of the previous
     # pairs) minus DIP_SIGMA x the forest change noise for this area.
-    delta80 = series["coh80"] - forest["coh80"]
+    delta80 = series["coh80"] - ref_coh["coh80"]
     threshold = (
-        delta80 - analysis.own_history_change(delta80) - config.DIP_SIGMA * float(case.change_sd)
+        delta80
+        - analysis.own_history_change(delta80)
+        - config.DIP_SIGMA[reference] * float(case.change_sd)
     )
     _segments(ax_c, ds.coh80, threshold, style.INK_2, 1.2, ls="--")
-    _segments(ax_c, ds.coh20, series["coh20"] - forest["coh20"], style.COH20, 3)
-    _segments(ax_c, ds.coh80, series["coh80"] - forest["coh80"], style.COH80, 3)
-    _segments(ax_c, ds.coh80, pixel["coh80"] - forest["coh80"], style.COH80, 1, alpha=0.7)
-    ax_c.set_ylabel("Coherence − forest")
+    _segments(ax_c, ds.coh20, series["coh20"] - ref_coh["coh20"], style.COH20, 3)
+    _segments(ax_c, ds.coh80, delta80, style.COH80, 3)
+    _segments(ax_c, ds.coh80, pixel["coh80"] - ref_coh["coh80"], style.COH80, 1, alpha=0.7)
+    ax_c.set_ylabel("Coherence − forest" if reference == "scene" else "Coherence − nearby forest")
     ax_c.set_ylim(-0.5, 0.7)
 
     for ax in (ax_n, ax_b, ax_c):
@@ -445,22 +515,41 @@ def plot_case(ds: data.Dataset, s2: data.S2Stack, case, coh_kind: str = "coh80")
         loc="upper left",
     )
     suffix = "" if coh_kind == "coh80" else "_coh20"
-    style.save(fig, OUT / case.category / f"{case.case_id}{suffix}.png")
+    style.save(fig, OUT / case.category / f"forest_{reference}" / f"{case.case_id}{suffix}.png")
 
 
-def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
+REFERENCE_TEXT = {
+    "scene": (
+        "the stable-forest median over the whole study area for the same pair "
+        "(the same reference for every case)"
+    ),
+    "ring": (
+        f"the mean of intact forest {config.RING_INNER_PX * config.PIXEL_M:.0f}-"
+        f"{config.RING_OUTER_PX * config.PIXEL_M:.0f} m around the case for the same pair. Rain is "
+        "patchy, so nearby forest shares the case's weather much more closely than the "
+        "scene-wide median: the noise of the reference-corrected coherence is 2-3 times "
+        "smaller"
+    ),
+}
+
+
+def write_readmes(ds: data.Dataset, cases, reference: str) -> None:
     by_cat: dict[str, list] = {}
     for c in cases:
         by_cat.setdefault(c.category, []).append(c)
+    sigma = config.DIP_SIGMA[reference]
+    false_rate = config.DIP_FALSE_RATE[reference]
     for cat, items in by_cat.items():
         title, text = CATEGORY_TEXT[cat]
+        text = text.replace("DIP_SIGMA_X", f"{sigma:g}")
         rows = [
             "| Case | Area (ha) | Outline | Before | Coherence dips (sigma) | "
             "Optical clearing (NBR) | HV drop | RADD alert | HV step (dB) |",
             "|---|--:|---|---|---|---|---|---|--:|",
         ]
         timing = [
-            "| Case | 80 m pairs spanning the optical clearing: forest coherence / case − forest |",
+            "| Case | 80 m pairs spanning the optical clearing: reference coherence / "
+            "case − reference |",
             "|---|---|",
         ]
         context = [
@@ -479,7 +568,7 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
                 f"| {c.case_id} | {c.area_ha} | {c.delineation} | {c.state_before} | {dips} | "
                 f"{opt} | {hv} | {c.radd_alert or '-'} | {c.hv_step_db} |"
             )
-            timing.append(f"| {c.case_id} | {spanning_pairs_text(ds, c)} |")
+            timing.append(f"| {c.case_id} | {spanning_pairs_text(ds, c, reference)} |")
             before = c._day("optical_start") if c.optical_start else c.event_start
             if np.isfinite(before):
                 ctx = analysis.coherence_context(ds, c.rows, c.cols, before)
@@ -495,6 +584,9 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
                 )
         readme = f"""# {title}
 
+**Weather reference: `{reference}`.** Coherence is compared with {REFERENCE_TEXT[reference]}.
+Figures using the other reference are in `../forest_{"ring" if reference == "scene" else "scene"}/`.
+
 {text}
 
 ## Cases
@@ -503,8 +595,7 @@ def write_readmes(ds: data.Dataset, s2: data.S2Stack, cases) -> None:
 
 "Optical clearing" is the interval between the last date the case-mean NBR is
 forest-like (>= {config.NBR_FOREST_MIN}) and the first later date it is cleared (<= {config.NBR_CLEARED_MAX}); "-" means the
-case never looks forested or never looks cleared on the usable dates (often a
-"RADD seed" outline, or clearing before the first usable image).
+case never looks forested or never looks cleared on the usable dates.
 
 ## Coherence before and at its lowest, against surrounding forest
 
@@ -515,108 +606,119 @@ case never looks forested or never looks cleared on the usable dates (often a
 straddle the outline out of the ring). "Before" averages the pairs ending on or
 before the last forest-like Sentinel-2 date (the start of the optical clearing),
 or the event start where there is no optical interval. "Minimum" is the pair with
-the lowest case coherence. Because rain is patchy, the surrounding ring is a
-better weather reference than the scene-wide forest median: a case can be much
-darker than nearby forest in a pair where the scene-wide median is also low.
+the lowest case coherence.
 
 ## Does the clearing show up in the pair that spans it?
 
 {chr(10).join(timing)}
 
 A clearing lowers coherence only if the forest was coherent in that pair to begin
-with. Where the spanning pair has forest coherence around 0.45-0.5 the case drops
-0.2-0.35 below forest; where it is low (e.g. 0.17 in the 21 Dec - 2 Jan pair, close
-to the 80 m estimator floor of about 0.08, most likely rain) there is little room
-left and the drop stays within forest noise.
+with; where the reference forest is itself close to the 80 m estimator floor (about
+0.08), there is little room left for a dip.
 
 ## Reading the figures
 
-- **Outline** (yellow): the whole disturbed area, taken from Sentinel-2: pixels
-  whose NBR dropped by at least {config.NBR_DROP_MIN} and ended <= {config.NBR_CLEARED_MAX} between the last two usable
-  images at least {config.PRE_GAP_D} days before the HV drop and the first two after it,
-  connected to the RADD seed. "RADD seed" means the optical outline failed
-  (clouds) and the smaller RADD-based seed is used instead. "Before" is the land
-  state before the event from the case-mean NBR (forest if >= {config.NBR_FOREST_MIN}).
-- **Sentinel-2 chips**: true colour, Cloud Score+ masked (clouds light gray), only
-  dates at least 80% clear and haze-free (median blue <= 0.06). Two before the
-  event (the earlier of the HV drop and the coherence dip; at least 20 days apart)
-  and two after. A faint
-  seam can appear where two Sentinel-2 granules meet.
-- **HV chips**: GCOV HV, -16 (black) to -6 dB (white), the dual-pol date nearest
-  each Sentinel-2 date on the same side of the event. Single-date 20 m HV is
+- **Outline** (yellow): the whole disturbed area from Sentinel-2: pixels whose NBR
+  dropped by at least {config.NBR_DROP_MIN} and ended <= {config.NBR_CLEARED_MAX} between the last two usable images at
+  least {config.PRE_GAP_D} days before the HV drop and the first two after it, connected to the
+  RADD seed ("RADD seed" = optical outline failed, the seed is used). "Before" is
+  the land state before the event from the case-mean NBR (forest if >= {config.NBR_FOREST_MIN}).
+- **Chip columns**: when a coherence dip is flagged, the four columns follow the
+  deepest dip: the pair before it, **the dip pair (framed in green, matching the
+  hatched band)**, the pair after it, and the last pair of the series. Each
+  column's Sentinel-2 image is the clear date inside that pair (or within
+  {CHIP_S2_TOLERANCE_D} days of it; "no clear image" otherwise) and its HV image the nearest
+  dual-pol date. Without a dip, two columns come before the event and two after
+  it, matched to clear Sentinel-2 dates.
+- **Sentinel-2 chips**: true colour, Cloud Score+ masked (clouds light gray), at
+  least 80% clear and haze-free (median blue <= 0.06). A faint seam can appear
+  where two Sentinel-2 granules meet.
+- **HV chips**: GCOV HV, -16 (black) to -6 dB (white). Single-date 20 m HV is
   speckled; forest is about -10 dB and cleared land about -12.5 dB.
-- **Coherence chips**: HH coherence 0 (black) to 0.8 (white) for the pair closest to
-  each Sentinel-2 date, on the same side of the event (never the pair spanning
-  it). 80 m in the main figures (4 x 4 blocks of 20 m pixels); `<case>_coh20.png`
-  repeats the figure with 20 m coherence for the first case of each clearing
-  category.
-- **NBR**: Sentinel-2 normalized burn ratio, (B8 - B12) / (B8 + B12); case mean (black)
-  and stable-forest median in the window (dashed), on dates clear over the case.
-  Forest is about 0.6; felled or burned ground drops below 0.
+- **Coherence chips**: HH coherence 0 (black) to 0.8 (white). 80 m in the main
+  figures (4 x 4 blocks of 20 m pixels); `<case>_coh20.png` repeats the figure with
+  20 m coherence for the first case of the main clearing categories.
+- **NBR**: Sentinel-2 normalized burn ratio, (B8 - B12) / (B8 + B12); case mean
+  (black) and stable-forest median in the window (dashed). Forest is about 0.6;
+  felled or burned ground drops below 0.
 - **Backscatter**: thick = case mean (linear power), thin = one representative
   pixel, dashed = stable-forest HV median.
-- **Coherence − forest**: each pair is a segment from its first to its second date,
-  showing the case's coherence minus the stable-forest median for the **same
-  pair**. Dashed segments are the dip threshold for each pair: the case's own
-  recent level (median of its previous {config.CHANGE_BASELINE_PAIRS} pairs) minus {config.DIP_SIGMA:g} sigma of the
-  change noise for intact-forest areas of the case's size; a green segment below
-  its dashed segment is a flagged dip. The gray band is different: +/-2 sigma of
-  the *level* (case minus forest) for intact forest, i.e. how far an intact area
-  normally sits from the forest line; values well above it indicate non-forest. This removes changes that affect the whole scene: the 21 Dec - 2 Jan pair,
-  for example, is low everywhere (forest 0.17 against 0.25-0.52 in neighbouring
-  pairs), most likely weather, and does not indicate disturbance. Green = 80 m,
-  violet = 20 m (case mean), thin green = one pixel at 80 m. The gray band is
-  +/-2 sigma of the same quantity for intact-forest areas of the case's size.
-  Sigma is about 0.06-0.075 and barely shrinks with area, so forest coherence
-  varies coherently in space rather than only as estimation noise.
+- **Coherence panel**: each pair is a segment from its first to its second date,
+  showing the case's coherence minus the reference for the same pair. Green = 80 m,
+  violet = 20 m (case mean), thin green = one pixel at 80 m. **Dashed segments**
+  are the dip threshold per pair: the case's own recent level (median of its
+  previous {config.CHANGE_BASELINE_PAIRS} pairs) minus {sigma:g} sigma of the change noise for intact-forest
+  areas of the case's size; a green segment below its dashed segment is a flagged
+  dip. The **gray band** is +/-2 sigma of the *level* (case minus reference) for
+  intact forest, i.e. how far an intact area normally sits from the reference;
+  values well above it indicate non-forest.
 - **Bands**: orange fill = HV drop (last dual-pol date before and first after the
-  fitted HV step); green hatching = each flagged coherence dip: a pair whose 80 m
-  coherence (minus forest, to remove weather) is more than {config.DIP_SIGMA:g} sigma below the
-  median of the case's previous {config.CHANGE_BASELINE_PAIRS} pairs. Sigma is the spread of the same quantity
-  for intact-forest areas of the case's size; at {config.DIP_SIGMA:g} sigma, {config.DIP_FALSE_RATE} of intact
-  forest areas show any flagged dip over the whole series. **Dotted line**: median in-series RADD alert date for the case (RADD
-  lags the NISAR HV drop by about two weeks on average).
+  fitted HV step); green hatching = each flagged coherence dip. At {sigma:g} sigma
+  with the `{reference}` reference, {false_rate} of intact-forest areas show any flagged
+  dip over the whole series. **Dotted line**: median in-series RADD alert date
+  (RADD lags the NISAR HV drop by about two weeks on average).
 
-Regenerate with `python scripts/caqueta/select_cases.py` then
-`python scripts/caqueta/fig04_case_studies.py`.
+Regenerate with `python scripts/caqueta/select_cases.py --reference {reference}` then
+`python scripts/caqueta/fig04_case_studies.py --reference {reference}`.
 """
-        (OUT / cat / "README.md").write_text(readme)
+        folder = OUT / cat / f"forest_{reference}"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "README.md").write_text(readme)
 
 
-def write_index_readme(cases) -> None:
+def write_index_readme() -> None:
     lines = [
         "# Case studies",
         "",
-        "One folder per category, each with its own README describing the selection "
-        "rule and what to look for. `cases.csv` lists every case with its metrics; "
-        "`cases.npz` holds the pixel indices so all figures use identical pixels.",
+        "One folder per category. Inside each, `forest_scene/` and `forest_ring/` hold "
+        "the figures for the two weather references used to detect coherence dips:",
         "",
-        "Case numbers match the labels on `../01_site/overview.png`.",
+        "- `forest_scene`: coherence minus the stable-forest median over the whole study area",
+        "- `forest_ring`: coherence minus intact forest 80-300 m around each case "
+        "(lower noise, because rain is patchy)",
         "",
-        "| # | Case | Category |",
-        "|--:|---|---|",
+        "Each subfolder has a README describing the selection rule and what to look "
+        "for. `cases_forest_<reference>.csv` lists every case with its metrics; the "
+        "matching `.npz` holds the pixel indices. The two references select different "
+        "cases, so `forest_clearing_1` in one is not the same clearing as in the other.",
+        "",
+        "Case numbers match the labels on `../01_site/case_locations_forest_<reference>.png`.",
     ]
-    lines += [f"| {c.number} | {c.case_id} | {c.category} |" for c in cases]
+    for reference in config.REFERENCES:
+        if not select_cases.csv_path(reference).exists():
+            continue
+        lines += ["", f"## `{reference}` reference", "", "| # | Case |", "|--:|---|"]
+        lines += [f"| {c.number} | {c.case_id} |" for c in select_cases.read(reference)]
     (OUT / "README.md").write_text("\n".join(lines) + "\n")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--reference",
+        choices=config.REFERENCES,
+        nargs="+",
+        default=list(config.REFERENCES),
+        help="Weather reference(s) to plot (reads cases_forest_<reference>.csv)",
+    )
+    args = parser.parse_args()
     style.apply()
     ds = data.load()
     s2 = data.load_s2_stack()
-    cases = select_cases.read()
-    variants = {
-        next(c.case_id for c in cases if c.category == cat)
-        for cat in COH20_VARIANT_CATEGORIES
-        if any(c.category == cat for c in cases)
-    }
-    for case in cases:
-        plot_case(ds, s2, case, "coh80")
-        if case.case_id in variants:
-            plot_case(ds, s2, case, "coh20")
-        logger.info("Wrote %s", case.case_id)
-    write_readmes(ds, s2, cases)
-    write_index_readme(cases)
+    for reference in args.reference:
+        cases = select_cases.read(reference)
+        variants = {
+            next(c.case_id for c in cases if c.category == cat)
+            for cat in COH20_VARIANT_CATEGORIES
+            if any(c.category == cat for c in cases)
+        }
+        for case in cases:
+            plot_case(ds, s2, case, "coh80", reference)
+            if case.case_id in variants:
+                plot_case(ds, s2, case, "coh20", reference)
+            logger.info("Wrote %s (%s)", case.case_id, reference)
+        write_readmes(ds, cases, reference)
+    write_index_readme()
 
 
 if __name__ == "__main__":

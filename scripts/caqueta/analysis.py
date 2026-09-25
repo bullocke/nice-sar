@@ -380,29 +380,35 @@ def own_history_change(delta: np.ndarray) -> np.ndarray:
     return out
 
 
-def forest_noise(ds: Dataset, n_px: int, kind: str = "coh80") -> tuple[float, float]:
+def forest_noise(
+    ds: Dataset, n_px: int, kind: str = "coh80", reference: str = "scene"
+) -> tuple[float, float]:
     """Noise of the level and of the own-history change for an area of ``n_px``.
 
     Samples ``NOISE_SAMPLES`` random squares of about ``n_px`` pixels lying
-    entirely in stable forest. For each square, computes its forest-normalized
-    coherence per pair and the own-history change. Returns the pooled standard
-    deviations ``(level_sd, change_sd)``: how far an intact-forest area of this
-    size wanders from the forest reference, and from its own recent median, by
-    chance. Both barely shrink with area because forest coherence varies
-    coherently across space, not only as estimation noise.
+    entirely in stable forest. For each square, computes its coherence minus the
+    forest reference (``reference_series``, scene-wide or its own surrounding ring)
+    per pair, and the own-history change. Returns the pooled standard deviations
+    ``(level_sd, change_sd)``: how far an intact-forest area of this size wanders
+    from the reference, and from its own recent median, by chance. With the ring
+    reference both are 2-3 times smaller, because nearby forest shares the local
+    weather.
     """
     side = max(2, int(round(np.sqrt(n_px))))
-    key = (id(ds), side, kind)
+    key = (id(ds), side, kind, reference)
     if key not in _NOISE_CACHE:
         rng = np.random.default_rng(config.SEED)
         fits = ndimage.binary_erosion(ds.masks["stable_forest"], structure=np.ones((side, side)))
         ys, xs = np.nonzero(fits)
         pick = rng.choice(len(ys), min(config.NOISE_SAMPLES, len(ys)), replace=False)
-        ref = forest_reference(ds)[kind]
         vals = getattr(ds, kind).values
         h = side // 2
         levels, changes = [], []
         for y, x in zip(ys[pick], xs[pick], strict=True):
+            rr, cc = np.meshgrid(
+                np.arange(y - h, y - h + side), np.arange(x - h, x - h + side), indexing="ij"
+            )
+            ref = reference_series(ds, rr.ravel(), cc.ravel(), reference)[kind]
             d = np.nanmean(vals[:, y - h : y - h + side, x - h : x - h + side], axis=(1, 2)) - ref
             levels.append(d)
             changes.append(own_history_change(d))
@@ -529,12 +535,15 @@ def delineate_clearing(
     return rr + r0, cc + c0
 
 
-def describe(ds: Dataset, s2: S2Stack, rows: np.ndarray, cols: np.ndarray) -> dict:
+def describe(
+    ds: Dataset, s2: S2Stack, rows: np.ndarray, cols: np.ndarray, reference: str = "scene"
+) -> dict:
     """Everything used to categorize and plot a case (see ``select_cases``).
 
     - HV step and bracket (forest-normalized case-mean HV)
     - own-history change of 80 m coherence per pair and the flagged dips
-      (change below ``-DIP_SIGMA`` x the forest change noise for this area)
+      (change below ``-DIP_SIGMA[reference]`` x the forest change noise for this
+      area, with weather removed using the ``reference``: scene or local ring)
     - the event: from the earliest flagged dip (or the HV bracket, if no dip) to
       the end of the deepest dip (or the bracket)
     - land state before the event: forest if the case-mean NBR before it is
@@ -546,12 +555,12 @@ def describe(ds: Dataset, s2: S2Stack, rows: np.ndarray, cols: np.ndarray) -> di
     """
     s = patch_series(ds, rows, cols)
     hv = hv_step(ds, s)
-    level_sd, change_sd = forest_noise(ds, len(rows))
-    ref = forest_reference(ds)["coh80"]
+    level_sd, change_sd = forest_noise(ds, len(rows), reference=reference)
+    ref = reference_series(ds, rows, cols, reference)["coh80"]
     pairs = ds.coh80
     delta = s["coh80"] - ref
     change = own_history_change(delta)
-    flagged = np.flatnonzero(change < -config.DIP_SIGMA * change_sd)
+    flagged = np.flatnonzero(change < -config.DIP_SIGMA[reference] * change_sd)
     deepest = int(np.nanargmin(change)) if np.isfinite(change).any() else None
 
     if flagged.size:
@@ -635,7 +644,7 @@ def categorize(m: dict) -> str | None:
     return None
 
 
-def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
+def select_cases(ds: Dataset, s2: S2Stack, reference: str = "scene") -> list[Patch]:
     """Pick case studies with transparent, seeded rules.
 
     1. **Seeds**: connected groups of core RADD high-confidence pixels whose alert
@@ -667,9 +676,10 @@ def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
             how = "Sentinel-2"
             if obj is None:
                 obj, how = (rows, cols), "RADD seed"
-            candidates.append((obj[0], obj[1], how, describe(ds, s2, *obj)))
+            candidates.append((obj[0], obj[1], how, describe(ds, s2, *obj, reference)))
     logger.info(
-        "%d candidates (%d outlined from Sentinel-2)",
+        "%s reference: %d candidates (%d outlined from Sentinel-2)",
+        reference,
         len(candidates),
         sum(c[2] == "Sentinel-2" for c in candidates),
     )
@@ -723,7 +733,7 @@ def select_cases(ds: Dataset, s2: S2Stack) -> list[Patch]:
             if not available(rr, cc):
                 continue
             k += 1
-            m = describe(ds, s2, rr, cc)
+            m = describe(ds, s2, rr, cc, reference)
             chosen.append(_make_patch(ds, f"{cat}_{k}", cat, rr, cc, "control", m, control=True))
             taken[rr, cc] = True
     return chosen
@@ -841,12 +851,44 @@ def local_ring(ds: Dataset, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
 
     The inner gap (one 80 m cell) keeps 80 m coherence cells that straddle the
     outline out of the ring; RADD-alerted pixels and non-forest are excluded.
+    Returns a boolean mask on the full grid (computed on a local crop for speed).
     """
-    mask = np.zeros(ds.grid.shape, bool)
-    mask[rows, cols] = True
+    h, w = ds.grid.shape
+    pad = config.RING_OUTER_PX + 1
+    r0, r1 = max(rows.min() - pad, 0), min(rows.max() + pad + 1, h)
+    c0, c1 = max(cols.min() - pad, 0), min(cols.max() + pad + 1, w)
+    mask = np.zeros((r1 - r0, c1 - c0), bool)
+    mask[rows - r0, cols - c0] = True
     ring = ndimage.binary_dilation(mask, iterations=config.RING_OUTER_PX)
     ring &= ~ndimage.binary_dilation(mask, iterations=config.RING_INNER_PX)
-    return ring & (ds.radd.alert_date <= -9999) & (ds.radd.forest == 1)
+    crop = (slice(r0, r1), slice(c0, c1))
+    ring &= (ds.radd.alert_date[crop] <= -9999) & (ds.radd.forest[crop] == 1)
+    out = np.zeros(ds.grid.shape, bool)
+    out[crop] = ring
+    return out
+
+
+def reference_series(
+    ds: Dataset, rows: np.ndarray, cols: np.ndarray, reference: str
+) -> dict[str, np.ndarray]:
+    """Per-pair forest reference coherence (coh80, coh20) used to remove weather.
+
+    ``reference="scene"``: the stable-forest median over the whole AOI (the same for
+    every case). ``reference="ring"``: the mean of the intact-forest ring around the
+    case (``local_ring``); rain is patchy, so nearby forest is a closer match to the
+    weather the case experienced. Falls back to the scene reference when the ring
+    has fewer than ``RING_MIN_PX`` pixels.
+    """
+    scene = forest_reference(ds)
+    if reference == "scene":
+        return {"coh80": scene["coh80"], "coh20": scene["coh20"]}
+    ring = local_ring(ds, rows, cols)
+    if ring.sum() < config.RING_MIN_PX:
+        return {"coh80": scene["coh80"], "coh20": scene["coh20"]}
+    return {
+        kind: np.array([np.nanmean(v[ring]) for v in getattr(ds, kind).values])
+        for kind in ("coh80", "coh20")
+    }
 
 
 def coherence_context(ds: Dataset, rows: np.ndarray, cols: np.ndarray, before_day: float) -> dict:

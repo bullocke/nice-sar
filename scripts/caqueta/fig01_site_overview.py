@@ -46,7 +46,6 @@ def main() -> None:
     scenes = data.s2_scenes()
     early = _clearest(scenes, ds.first_day - 15, ds.first_day + 60)
     late = _clearest(scenes, ds.last_day - 60, ds.last_day + 15)
-    cases = select_cases.read()
 
     alert = ds.radd.alert_date
     during = np.where((alert >= ds.first_day) & (alert <= ds.last_day), alert, np.nan)
@@ -76,28 +75,31 @@ def main() -> None:
     cb.ax.set_yticklabels([config.to_date(t).strftime("%b %Y") for t in ticks])
     style.save(fig, OUT / "overview.png")
 
-    # Case locations on a larger map so the numbers stay readable
-    fig, ax = plt.subplots(figsize=(14, 11.5))
-    ax.set_facecolor("white")
-    ax.imshow(before, cmap=ListedColormap(["#d9d8d4"]), interpolation="nearest")
-    im = ax.imshow(
-        during, cmap=DATE_CMAP, vmin=ds.first_day, vmax=ds.last_day, interpolation="nearest"
-    )
-    for c in cases:
-        ax.text(
-            c.cols.mean(),
-            c.rows.mean(),
-            c.number,
-            fontsize=12,
-            ha="center",
-            va="center",
-            color=style.INK,
-            bbox={"boxstyle": "circle,pad=0.15", "fc": "white", "ec": style.INK_2, "lw": 1},
+    # Case locations on a larger map (one per weather reference) so numbers stay readable
+    references = [r for r in config.REFERENCES if select_cases.csv_path(r).exists()]
+    for reference in references:
+        cases = select_cases.read(reference)
+        fig, ax = plt.subplots(figsize=(14, 11.5))
+        ax.set_facecolor("white")
+        ax.imshow(before, cmap=ListedColormap(["#d9d8d4"]), interpolation="nearest")
+        im = ax.imshow(
+            during, cmap=DATE_CMAP, vmin=ds.first_day, vmax=ds.last_day, interpolation="nearest"
         )
-    style.image_axes(ax)
-    cb = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.01, ticks=ticks)
-    cb.ax.set_yticklabels([config.to_date(t).strftime("%b %Y") for t in ticks])
-    style.save(fig, OUT / "case_locations.png")
+        for c in cases:
+            ax.text(
+                c.cols.mean(),
+                c.rows.mean(),
+                c.number,
+                fontsize=12,
+                ha="center",
+                va="center",
+                color=style.INK,
+                bbox={"boxstyle": "circle,pad=0.15", "fc": "white", "ec": style.INK_2, "lw": 1},
+            )
+        style.image_axes(ax)
+        cb = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.01, ticks=ticks)
+        cb.ax.set_yticklabels([config.to_date(t).strftime("%b %Y") for t in ticks])
+        style.save(fig, OUT / f"case_locations_forest_{reference}.png")
 
     lines = [
         "# Site overview",
@@ -113,13 +115,13 @@ def main() -> None:
         f"({config.to_date(ds.first_day)} to {config.to_date(ds.last_day)}), light to dark by date; "
         "gray = alerts before the series (already cleared land).",
         "",
-        "`case_locations.png` repeats the RADD map at a larger size with the case "
-        "studies in `../04_cases/` numbered:",
-        "",
-        "| # | Case |",
-        "|--:|---|",
+        "`case_locations_forest_<reference>.png` repeats the RADD map at a larger size "
+        "with the case studies in `../04_cases/` numbered, one map per weather "
+        "reference (the two references select different cases).",
     ]
-    lines += [f"| {c.number} | {c.case_id} |" for c in cases]
+    for reference in references:
+        lines += ["", f"## `{reference}` reference", "", "| # | Case |", "|--:|---|"]
+        lines += [f"| {c.number} | {c.case_id} |" for c in select_cases.read(reference)]
     lines += ["", "Regenerate: `python scripts/caqueta/fig01_site_overview.py`."]
     (OUT / "README.md").write_text("\n".join(lines) + "\n")
     logger.info("Wrote %s", OUT)
