@@ -109,5 +109,10 @@ GEDI/Overlap/outputs/diagnostics/v2c/chips/
 GEDI/Overlap/.cache/
 !GEDI/Overlap/data/
 !GEDI/Overlap/data/*.geojson
+GEDI/
+
 # Local analysis outputs (figures, examples)
 local_examples/
+
+# Local-only Disturbance Index side project (code, overrides, outputs)
+local_di/
