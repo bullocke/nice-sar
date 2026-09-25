@@ -26,6 +26,24 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _bbox_window(
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    crs: CRS,
+    transform: Affine,
+    bbox: tuple[float, float, float, float] | None,
+) -> tuple[tuple[slice, slice], np.ndarray, np.ndarray, Affine]:
+    """Pixel window, subset coordinates and transform for an optional WGS84 bbox."""
+    if bbox is None:
+        full = (slice(0, len(y_coords)), slice(0, len(x_coords)))
+        return full, x_coords, y_coords, transform
+    from nice_sar.io.subset import bbox_to_pixel_slices  # avoid a circular import
+
+    rows, cols, sub_x, sub_y = bbox_to_pixel_slices(x_coords, y_coords, crs, bbox)
+    sub_transform = transform * Affine.translation(cols.start, rows.start)
+    return (rows, cols), sub_x, sub_y, sub_transform
+
+
 def read_identification(h5_file: h5py.File) -> dict:
     """Read product-level identification metadata common to all NISAR products.
 
@@ -155,8 +173,13 @@ def read_gcov(
     polarization: str = "HH",
     chunks: dict | None = None,
     filesystem: fsspec.AbstractFileSystem | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> xr.DataArray:
-    """Read a GCOV polarization band as a lazy xarray DataArray.
+    """Read a GCOV polarization band as an xarray DataArray.
+
+    With ``bbox``, only the pixels inside the bounding box are read, which is
+    much faster when streaming a full frame over HTTPS (a frame band is about
+    1 GB; a 20 km window is a few MB).
 
     Args:
         source: Path to NISAR GCOV HDF5 file (local or S3), or an already-open
@@ -167,6 +190,8 @@ def read_gcov(
         chunks: Dask chunk specification. Defaults to ``{"y": 1024, "x": 1024}``.
         filesystem: Authenticated S3 filesystem. Required when *source* is an
             S3 URI (``s3://...``).
+        bbox: Optional (west, south, east, north) in WGS84 degrees. Reads only
+            this window.
 
     Returns:
         ``xarray.DataArray`` backed by dask with y/x coordinates and CRS metadata.
@@ -195,10 +220,13 @@ def read_gcov(
 
         grid_path = f"/science/LSAR/GCOV/grids/frequency{frequency}"
         dataset = h5_file[f"{grid_path}/{dataset_name}"]
+        window, x_coords, y_coords, transform = _bbox_window(
+            x_coords, y_coords, crs, transform, bbox
+        )
 
         # Read the dataset into memory so we don't depend on h5py handle lifetime,
         # then wrap in dask for downstream lazy computation.
-        raw = np.asarray(dataset[:], dtype=np.float32)
+        raw = np.asarray(dataset[window], dtype=np.float32)
         data = da.from_array(raw, chunks=(chunks["y"], chunks["x"]))
 
         metadata = read_gcov_metadata(h5_file)
@@ -422,10 +450,7 @@ def _gunw_projection_info(
     grid), so we read from the polarization-level group rather than a shared
     top-level coordinate array.
     """
-    grp_path = (
-        f"/science/LSAR/{_GUNW_PRODUCT}/grids/frequency{frequency}"
-        f"/{group}/{polarization}"
-    )
+    grp_path = f"/science/LSAR/{_GUNW_PRODUCT}/grids/frequency{frequency}/{group}/{polarization}"
     projection = h5_file[f"{grp_path}/projection"]
     epsg_code = projection.attrs["epsg_code"]
     crs = CRS.from_epsg(int(epsg_code))
@@ -449,8 +474,9 @@ def read_gunw(
     posting: int | None = None,
     chunks: dict | None = None,
     filesystem: fsspec.AbstractFileSystem | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> xr.DataArray:
-    """Read a GUNW data layer as a lazy xarray DataArray.
+    """Read a GUNW data layer as an xarray DataArray.
 
     GUNW products contain data at two ground postings:
 
@@ -481,6 +507,8 @@ def read_gunw(
             postings). Defaults to ``80`` when not specified.
         chunks: Dask chunk specification. Defaults to ``{"y": 1024, "x": 1024}``.
         filesystem: Authenticated filesystem for remote paths.
+        bbox: Optional (west, south, east, north) in WGS84 degrees. Reads only
+            this window.
 
     Returns:
         ``xarray.DataArray`` backed by dask with y/x coordinates and CRS
@@ -491,9 +519,7 @@ def read_gunw(
             the layer is unavailable at the requested posting.
     """
     if layer not in _GUNW_LAYERS:
-        raise ValueError(
-            f"Unknown GUNW layer {layer!r}. Choose from: {sorted(_GUNW_LAYERS)}"
-        )
+        raise ValueError(f"Unknown GUNW layer {layer!r}. Choose from: {sorted(_GUNW_LAYERS)}")
 
     if posting is None:
         posting = 80
@@ -522,13 +548,16 @@ def read_gunw(
             f"/{group}/{polarization}/{layer}"
         )
         dataset = h5_file[ds_path]
+        window, x_coords, y_coords, transform = _bbox_window(
+            x_coords, y_coords, crs, transform, bbox
+        )
 
         if layer == "wrappedInterferogram":
-            raw = np.asarray(dataset[:], dtype=np.complex64)
+            raw = np.asarray(dataset[window], dtype=np.complex64)
         elif layer == "connectedComponents":
-            raw = np.asarray(dataset[:], dtype=np.uint16)
+            raw = np.asarray(dataset[window], dtype=np.uint16)
         else:
-            raw = np.asarray(dataset[:], dtype=np.float32)
+            raw = np.asarray(dataset[window], dtype=np.float32)
 
         data = da.from_array(raw, chunks=(chunks["y"], chunks["x"]))
         metadata = read_identification(h5_file)
@@ -611,9 +640,7 @@ def read_goff(
         ValueError: If *layer* is not a recognized GOFF dataset name.
     """
     if layer not in _GOFF_LAYERS:
-        raise ValueError(
-            f"Unknown GOFF layer {layer!r}. Choose from: {sorted(_GOFF_LAYERS)}"
-        )
+        raise ValueError(f"Unknown GOFF layer {layer!r}. Choose from: {sorted(_GOFF_LAYERS)}")
 
     if chunks is None:
         chunks = {"y": 1024, "x": 1024}

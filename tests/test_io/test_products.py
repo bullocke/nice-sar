@@ -150,6 +150,39 @@ class TestReadGcov:
         assert np.all(vals >= 0)
 
 
+class TestReadWindow:
+    """bbox reads only the window and keeps coordinates and transform consistent."""
+
+    _BBOX = (-111.882999, 40.769636, -111.871739, 40.778370)
+
+    def test_gcov_window_matches_full_read(self, synthetic_gcov_path: Path) -> None:
+        full = read_gcov(synthetic_gcov_path, polarization="HH")
+        sub = read_gcov(synthetic_gcov_path, polarization="HH", bbox=self._BBOX)
+        assert 0 < sub.size < full.size
+        expected = full.sel(x=sub.x, y=sub.y)
+        np.testing.assert_array_equal(sub.values, expected.values)
+        a, _, c, _, e, f = sub.attrs["transform"][:6]
+        assert c == pytest.approx(float(sub.x[0]) - a / 2, abs=abs(a))
+        assert f == pytest.approx(float(sub.y[0]) - e / 2, abs=abs(e))
+
+    def test_gunw_window(self, synthetic_gunw_path: Path) -> None:
+        from pyproj import Transformer
+
+        full = read_gunw(synthetic_gunw_path, layer="coherenceMagnitude", posting=80)
+        to_wgs84 = Transformer.from_crs(full.attrs["crs"], "EPSG:4326", always_xy=True)
+        lon, lat = to_wgs84.transform(
+            [float(full.x[5]), float(full.x[20])], [float(full.y[20]), float(full.y[5])]
+        )
+        sub = read_gunw(
+            synthetic_gunw_path,
+            layer="coherenceMagnitude",
+            posting=80,
+            bbox=(lon[0], lat[0], lon[1], lat[1]),
+        )
+        assert sub.shape[0] < full.shape[0] and sub.shape[1] < full.shape[1]
+        np.testing.assert_array_equal(sub.values, full.sel(x=sub.x, y=sub.y).values)
+
+
 class TestReadQuadCovariances:
     """Tests for read_quad_covariances."""
 
@@ -278,9 +311,7 @@ class TestReadGunw:
         assert da_xr.attrs["posting"] == 80
 
     def test_coherence_80m(self, synthetic_gunw_path: Path) -> None:
-        da_xr = read_gunw(
-            synthetic_gunw_path, polarization="HH", layer="coherenceMagnitude"
-        )
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH", layer="coherenceMagnitude")
         assert da_xr.shape == (64, 64)
         assert da_xr.attrs["units"] == "unitless"
         assert da_xr.attrs["posting"] == 80
@@ -301,17 +332,13 @@ class TestReadGunw:
         assert np.all(vals >= 0) and np.all(vals <= 1)
 
     def test_wrapped_interferogram_complex(self, synthetic_gunw_path: Path) -> None:
-        da_xr = read_gunw(
-            synthetic_gunw_path, polarization="HH", layer="wrappedInterferogram"
-        )
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH", layer="wrappedInterferogram")
         assert np.iscomplexobj(da_xr.values)
         assert da_xr.shape == (256, 256)
         assert da_xr.attrs["posting"] == 20
 
     def test_connected_components_uint(self, synthetic_gunw_path: Path) -> None:
-        da_xr = read_gunw(
-            synthetic_gunw_path, polarization="HH", layer="connectedComponents"
-        )
+        da_xr = read_gunw(synthetic_gunw_path, polarization="HH", layer="connectedComponents")
         assert da_xr.values.dtype == np.uint16
 
     def test_invalid_layer_raises(self, synthetic_gunw_path: Path) -> None:
@@ -336,9 +363,7 @@ class TestReadGunw:
         assert "x" in da_xr.coords and "y" in da_xr.coords
 
     def test_20m_coordinates_differ(self, synthetic_gunw_path: Path) -> None:
-        da_80 = read_gunw(
-            synthetic_gunw_path, polarization="HH", layer="coherenceMagnitude"
-        )
+        da_80 = read_gunw(synthetic_gunw_path, polarization="HH", layer="coherenceMagnitude")
         da_20 = read_gunw(
             synthetic_gunw_path,
             polarization="HH",
@@ -375,9 +400,7 @@ class TestReadGoff:
         assert da_xr.attrs["units"] == "pixels"
 
     def test_slant_range_layer(self, synthetic_goff_path: Path) -> None:
-        da_xr = read_goff(
-            synthetic_goff_path, polarization="HH", layer="slantRangeOffset"
-        )
+        da_xr = read_goff(synthetic_goff_path, polarization="HH", layer="slantRangeOffset")
         assert da_xr.attrs["layer"] == "slantRangeOffset"
 
     def test_snr_layer(self, synthetic_goff_path: Path) -> None:
