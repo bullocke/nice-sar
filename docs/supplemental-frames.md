@@ -1,6 +1,6 @@
 # Supplemental PROVISIONAL Frames
 
-PROVISIONAL (calibrated) NISAR products are forward-processed for acquisitions from **2026-06-17** onward. The [availability overview](nisar-docs/data-availability/availability-overview.md) also says the science team selected "a limited set of NISAR frames" to be processed further back in time for time-series validation, and that these products go into the same PROVISIONAL collections.
+PROVISIONAL (calibrated) NISAR products are forward-processed for acquisitions from **2026-06-17** onward. The [availability overview](https://nisar-docs.asf.alaska.edu/availability-overview/) also says the science team selected "a limited set of NISAR frames" to be processed further back in time for time-series validation, and that these products go into the same PROVISIONAL collections.
 
 The overview does not list those frames, so this page identifies them from the archive. Any PROVISIONAL granule acquired before 2026-06-17 must come from this supplemental processing. Listing those granules and grouping them by track, direction, and frame gives the set of supplemental frames.
 
@@ -132,7 +132,7 @@ nice-sar search --product GUNW --track 25 --frame 90 --direction D --end 2026-06
 
 ## Data file and regeneration
 
-The full table, including every continent, GUNW rows, footprint bounds, and an example granule ID per frame, is in [`docs/data/supplemental_provisional_frames.csv`](data/supplemental_provisional_frames.csv). To regenerate it (no Earthdata login is needed):
+The full table, including every continent, GUNW rows, footprint bounds, and an example granule ID per frame, is written by [`scripts/list_supplemental_frames.py`](https://github.com/bullocke/nice-sar/blob/main/scripts/list_supplemental_frames.py) to `docs/data/supplemental_provisional_frames.csv` (no Earthdata login is needed):
 
 ```bash
 python scripts/list_supplemental_frames.py --products GCOV GUNW

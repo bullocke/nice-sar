@@ -13,3 +13,7 @@ Display utilities, RGB composite generation, and interactive mapping.
 ## Interactive Mapping
 
 ::: nice_sar.viz.mapping
+
+## Figure Style
+
+::: nice_sar.viz.style

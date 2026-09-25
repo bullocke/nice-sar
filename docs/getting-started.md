@@ -10,7 +10,7 @@ and visualize NISAR SAR data — all from the cloud.
 3. `nice-sar` installed:
 
 ```bash
-pip install nice-sar
+pip install "nice-sar @ git+https://github.com/bullocke/nice-sar.git"
 ```
 
 ## 1. Authenticate
@@ -95,7 +95,7 @@ for `earthaccess` users.
       acquisitions. Check the polarization token in the granule name before
       building an HV time series.
 
-    See the [PROVISIONAL known issues](nisar-docs/data-availability/provisional-known-issues.md)
+    See the [PROVISIONAL known issues](https://nisar-docs.asf.alaska.edu/provisional-known-issues/)
     for the full list.
 
 ### From the command line

@@ -1,11 +1,14 @@
 site_name: nice-sar
-site_description: NISAR SAR data processing and analysis toolkit
+site_description: Search, stream, and analyse NISAR L-band SAR data in Python
 site_url: https://bullocke.github.io/nice-sar
 repo_url: https://github.com/bullocke/nice-sar
 repo_name: bullocke/nice-sar
+edit_uri: edit/main/docs/
 
 theme:
   name: material
+  icon:
+    repo: fontawesome/brands/github
   palette:
     - scheme: default
       primary: teal
@@ -20,13 +23,38 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
+    - navigation.tabs
     - navigation.sections
-    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
     - content.code.copy
+    - content.tabs.link
     - search.highlight
+    - search.suggest
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+exclude_docs: |
+  nisar-docs/
+  data/
+  literature/
+  tutorials/*.md
+  tutorials/*.log
+  tutorials/.cache/
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      include: ["*.ipynb"]
+      execute: false
+      include_source: true
+      ignore_h1_titles: true
+      remove_tag_config:
+        remove_cell_tags:
+          - colab-setup
   - mkdocstrings:
       handlers:
         python:
@@ -38,24 +66,53 @@ plugins:
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
+  - tables
   - pymdownx.details
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - toc:
       permalink: true
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - Supplemental Frames: supplemental-frames.md
-  - CHPC Guide: chpc-guide.md
-  - Notebooks: notebooks.md
+  - Gallery: gallery.md
+  - Tutorials:
+      - notebooks.md
+      - 00 · Data discovery: tutorials/00_data_discovery.ipynb
+      - 01 · Search and download: tutorials/01_search_and_download.ipynb
+      - 02 · Read GCOV: tutorials/02_read_gcov.ipynb
+      - 03 · Speckle and multilooking: tutorials/03_preprocessing.ipynb
+      - 04 · RGB composites: tutorials/04_rgb_composites.ipynb
+      - 05 · Polarimetry: tutorials/05_polarimetric_analysis.ipynb
+      - 06 · InSAR coherence: tutorials/06_insar_coherence.ipynb
+      - 07 · Time-series change: tutorials/07_timeseries_change.ipynb
+      - 08 · Subset download: tutorials/08_subset_download.ipynb
+      - 09 · Forest masks: tutorials/09_forest_masks.ipynb
+      - 10 · Texture: tutorials/10_texture_comparison.ipynb
+      - 11 · Forest disturbance: tutorials/11_disturbance_detection.ipynb
+  - Science:
+      - Forest disturbance in Caquetá: disturbance.md
+      - Texture measures compared: texture-comparison.md
+  - Guides:
+      - Getting started: getting-started.md
+      - Supplemental frames: supplemental-frames.md
+      - CHPC guide: chpc-guide.md
   - API Reference:
       - Auth: api/auth.md
       - Search: api/search.md
       - I/O: api/io.md
       - Preprocessing: api/preprocess.md
       - Analysis: api/analysis.md
+      - Disturbance: api/disturbance.md
+      - Forests: api/forests.md
       - Visualization: api/viz.md
+      - Datasets: api/datasets.md

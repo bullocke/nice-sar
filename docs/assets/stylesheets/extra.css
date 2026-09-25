@@ -1,0 +1,94 @@
+/* nice-sar documentation styles */
+
+.md-typeset .lead {
+  font-size: 1.15rem;
+  line-height: 1.5;
+  color: var(--md-default-fg-color--light);
+  margin-top: -0.4rem;
+}
+
+/* Hero figure on the landing page */
+.md-typeset figure.hero {
+  margin: 1.2rem auto 1.6rem;
+  max-width: 44rem;
+}
+.md-typeset figure.hero img {
+  border-radius: 0.4rem;
+  box-shadow: var(--md-shadow-z2);
+  background: #fff;
+}
+.md-typeset figure figcaption {
+  max-width: 48rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Science-page figures: white background so figures read well in dark mode */
+.md-typeset figure img {
+  background: #fff;
+  border-radius: 0.2rem;
+}
+
+/* Gallery cards */
+.md-typeset .gallery.grid.cards > ul > li,
+.md-typeset .gallery.grid.cards > ol > li {
+  padding: 0;
+  overflow: hidden;
+}
+.md-typeset .gallery.grid.cards img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  transition: transform 0.25s ease;
+}
+.md-typeset .gallery.grid.cards li:hover > p:first-child img {
+  transform: scale(1.03);
+}
+.md-typeset .gallery.grid.cards li > p,
+.md-typeset .gallery.grid.cards li > hr {
+  margin-left: 0.8rem;
+  margin-right: 0.8rem;
+}
+.md-typeset .gallery.grid.cards li > p:first-child {
+  margin: 0;
+}
+.md-typeset .gallery .badges {
+  font-size: 0.7rem;
+  margin-bottom: 0.8rem;
+}
+.md-typeset .gallery.grid.cards .badges img {
+  display: inline;
+  width: auto;
+  aspect-ratio: auto;
+  height: 1.2rem;
+  border: 0;
+  vertical-align: middle;
+}
+
+/* Rendered notebooks: keep wide figures inside the content column */
+.jupyter-wrapper .jp-OutputArea-output img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Tutorial table */
+.md-typeset table:not([class]) td:first-child {
+  white-space: nowrap;
+}
+
+/* Wider content column so notebook figures are readable */
+.md-grid {
+  max-width: 1480px;
+}
+
+/* Rendered notebooks: hide cell tags, show log output as neutral text */
+.jupyter-wrapper .celltoolbar {
+  display: none !important;
+}
+.jupyter-wrapper .jp-OutputArea-output[data-mime-type="application/vnd.jupyter.stderr"] {
+  background: var(--md-code-bg-color) !important;
+  color: var(--md-default-fg-color--light) !important;
+}
