@@ -195,19 +195,21 @@ class TestComputeGlcmTexture:
         sk_corr = graycoprops(glcm, "correlation")[0, 0]
         sk_energy = graycoprops(glcm, "energy")[0, 0]
 
-        assert feats[HARALICK_FEATURES.index("contrast")] == pytest.approx(
-            sk_contrast, rel=1e-4
-        )
-        assert feats[HARALICK_FEATURES.index("homogeneity")] == pytest.approx(
-            sk_homog, rel=1e-4
-        )
-        assert feats[HARALICK_FEATURES.index("asm")] == pytest.approx(
-            sk_asm, rel=1e-4
-        )
-        assert feats[HARALICK_FEATURES.index("correlation")] == pytest.approx(
-            sk_corr, rel=1e-4
-        )
+        assert feats[HARALICK_FEATURES.index("contrast")] == pytest.approx(sk_contrast, rel=1e-4)
+        assert feats[HARALICK_FEATURES.index("homogeneity")] == pytest.approx(sk_homog, rel=1e-4)
+        assert feats[HARALICK_FEATURES.index("asm")] == pytest.approx(sk_asm, rel=1e-4)
+        assert feats[HARALICK_FEATURES.index("correlation")] == pytest.approx(sk_corr, rel=1e-4)
         # Energy = sqrt(ASM) — verify consistency
-        assert np.sqrt(feats[HARALICK_FEATURES.index("asm")]) == pytest.approx(
-            sk_energy, rel=1e-4
-        )
+        assert np.sqrt(feats[HARALICK_FEATURES.index("asm")]) == pytest.approx(sk_energy, rel=1e-4)
+
+
+def test_rank_variance_no_uint8_overflow() -> None:
+    """Variance stays correct for levels > 16 (squared levels exceed 255)."""
+    from nice_sar.preprocess.texture import compute_rank_texture
+
+    img = np.tile(np.array([0.0, 1.0]), (40, 20))  # alternating columns: max variance
+    out = compute_rank_texture(img, window_size=5, levels=32)
+    assert out is not None
+    centre = out["variance"][20, 20]
+    assert centre == pytest.approx(31.0**2 / 4, rel=0.15)
+    assert np.all(out["variance"] >= 0)

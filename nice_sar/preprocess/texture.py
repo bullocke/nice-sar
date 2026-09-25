@@ -57,9 +57,13 @@ def compute_rank_texture(
     try:
         textures["entropy"] = rank.entropy(scaled, fp).astype(np.float32)
         textures["mean"] = rank.mean(scaled, fp).astype(np.float32)
-        scaled_sq = (scaled.astype(np.float32) ** 2).astype(np.uint8)
-        mean_sq = rank.mean(scaled_sq, fp).astype(np.float32)
-        textures["variance"] = mean_sq - (textures["mean"] ** 2)
+        # Variance from float local moments over the same disk; squaring the
+        # uint8 levels in place would overflow for levels > 16.
+        kernel = fp.astype(np.float64) / fp.sum()
+        scaled_f = scaled.astype(np.float64)
+        local_mean = ndimage.convolve(scaled_f, kernel, mode="reflect")
+        local_sq = ndimage.convolve(scaled_f**2, kernel, mode="reflect")
+        textures["variance"] = np.maximum(local_sq - local_mean**2, 0).astype(np.float32)
         textures["range"] = rank.gradient(scaled, fp).astype(np.float32)
         for k in textures:
             textures[k][~valid_mask] = np.nan
@@ -86,9 +90,7 @@ def compute_local_contrast_homogeneity(
     contrast = ndimage.generic_filter(
         data, np.nanstd, size=window_size, mode="constant", cval=np.nan
     )
-    mean = ndimage.generic_filter(
-        data, np.nanmean, size=window_size, mode="constant", cval=np.nan
-    )
+    mean = ndimage.generic_filter(data, np.nanmean, size=window_size, mode="constant", cval=np.nan)
     homogeneity = 1.0 / (1.0 + contrast / (mean + 1e-10))
     contrast[~valid_mask] = np.nan
     homogeneity[~valid_mask] = np.nan
@@ -329,11 +331,11 @@ def _get_numba_kernel():  # type: ignore[no-untyped-def]
                                 and valid[rr, cc]
                                 and valid[nr, nc]
                             ):
-                                    gi = quantized[rr, cc]
-                                    gj = quantized[nr, nc]
-                                    glcm[gi, gj] += 1.0
-                                    glcm[gj, gi] += 1.0
-                                    total += 2.0
+                                gi = quantized[rr, cc]
+                                gj = quantized[nr, nc]
+                                glcm[gi, gj] += 1.0
+                                glcm[gj, gi] += 1.0
+                                total += 2.0
 
                 if total < eps:
                     continue
@@ -644,9 +646,7 @@ def compute_glcm_texture(
             "numba not installed — GLCM computation will be slow. "
             "Install numba for ~50-100x speedup: pip install numba"
         )
-        raw = _glcm_sliding_python(
-            quantized, valid_mask, levels, half, distances, angles
-        )
+        raw = _glcm_sliding_python(quantized, valid_mask, levels, half, distances, angles)
 
     # Build output dict
     requested = features if features is not None else HARALICK_FEATURES
