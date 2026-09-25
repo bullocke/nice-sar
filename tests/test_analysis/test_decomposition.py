@@ -12,9 +12,7 @@ from nice_sar.analysis.decomposition import (
 )
 
 
-def _make_quad_covariances(
-    rng: np.random.Generator, n: int
-) -> dict[str, np.ndarray]:
+def _make_quad_covariances(rng: np.random.Generator, n: int) -> dict[str, np.ndarray]:
     """Build a synthetic covariance dict for testing."""
     hh = rng.exponential(0.05, (n, n)).astype(np.float32)
     hv = rng.exponential(0.01, (n, n)).astype(np.float32)
@@ -238,3 +236,38 @@ class TestDecompositionEdgeCases:
         assert Ps.shape == (1, 1)
         H, A, alpha = cloude_pottier(T)
         assert H.shape == (1, 1)
+
+
+class TestCloudePottierAlphaPhysics:
+    """Mean alpha matches the canonical scattering mechanisms."""
+
+    @staticmethod
+    def _uniform(diag: tuple[float, float, float]) -> np.ndarray:
+        T = np.zeros((3, 3, 2, 2), dtype=np.complex64)
+        for i, v in enumerate(diag):
+            T[i, i] = v
+        return T
+
+    def test_surface_scattering_alpha_near_zero(self) -> None:
+        _, _, alpha = cloude_pottier(self._uniform((1.0, 0.0, 0.0)))
+        np.testing.assert_allclose(alpha, 0.0, atol=1.0)
+
+    def test_dihedral_scattering_alpha_near_ninety(self) -> None:
+        _, _, alpha = cloude_pottier(self._uniform((0.0, 1.0, 0.0)))
+        np.testing.assert_allclose(alpha, 90.0, atol=1.0)
+
+    def test_random_volume_alpha_sixty(self) -> None:
+        H, _, alpha = cloude_pottier(self._uniform((1.0, 1.0, 1.0)))
+        np.testing.assert_allclose(H, 1.0, atol=1e-3)
+        np.testing.assert_allclose(alpha, 60.0, atol=1.0)
+
+
+def test_coherency_matrix_nan_does_not_spread() -> None:
+    rng = np.random.default_rng(3)
+    shape = (20, 20)
+    cov = {k: rng.uniform(0.1, 1.0, shape).astype(np.float32) for k in ("HHHH", "HVHV", "VVVV")}
+    cov |= {k: np.zeros(shape, np.complex64) for k in ("HHHV", "HHVV", "HVVV")}
+    cov["HHHH"][10, 10] = np.nan
+    T = build_coherency_matrix(cov, window=7)
+    assert np.isnan(T[0, 0, 10, 10])
+    assert np.isfinite(T[0, 0]).sum() == 20 * 20 - 1

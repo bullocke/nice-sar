@@ -42,12 +42,20 @@ def build_coherency_matrix(
         Array of shape ``(3, 3, H, W)`` containing the coherency matrix at each pixel.
     """
 
+    def _mean(arr: np.ndarray, valid: np.ndarray, weight: np.ndarray) -> np.ndarray:
+        num = ndimage.uniform_filter(np.where(valid, arr, 0.0), size=window, mode="nearest")
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out = num / weight
+        return np.where(valid, out, np.nan)
+
     def _smooth(arr: np.ndarray) -> np.ndarray:
+        # NaN-aware boxcar: average the valid neighbours only, so a no-data pixel
+        # stays no-data instead of blanking its whole window.
+        valid = np.isfinite(arr)
+        weight = ndimage.uniform_filter(valid.astype(np.float64), size=window, mode="nearest")
         if np.iscomplexobj(arr):
-            mr = ndimage.uniform_filter(arr.real, size=window, mode="nearest")
-            mi = ndimage.uniform_filter(arr.imag, size=window, mode="nearest")
-            return np.asarray(mr + 1j * mi)
-        return np.asarray(ndimage.uniform_filter(arr, size=window, mode="nearest"))
+            return np.asarray(_mean(arr.real, valid, weight) + 1j * _mean(arr.imag, valid, weight))
+        return np.asarray(_mean(arr, valid, weight))
 
     c11 = _smooth(covariances["HHHH"])
     c22 = _smooth(covariances["HVHV"])
@@ -154,9 +162,7 @@ def cloude_pottier(
         # Sort eigenvalues descending
         idx = np.argsort(eigenvalues, axis=1)[:, ::-1]
         w = np.take_along_axis(eigenvalues, idx, axis=1).real
-        v = np.take_along_axis(
-            eigenvectors, idx[:, np.newaxis, :].repeat(3, axis=1), axis=2
-        )
+        v = np.take_along_axis(eigenvectors, idx[:, np.newaxis, :].repeat(3, axis=1), axis=2)
 
         w = np.maximum(w, 0.0)
         total = np.sum(w, axis=1, keepdims=True) + 1e-12
@@ -168,11 +174,10 @@ def cloude_pottier(
         # Anisotropy
         a = (ps[:, 1] - ps[:, 2]) / (ps[:, 1] + ps[:, 2] + 1e-12)
 
-        # Alpha from dominant eigenvector
-        v1_abs2 = np.abs(v[:, 0, 0]) ** 2
-        v2_abs2 = np.abs(v[:, 1, 0]) ** 2
-        v3_abs2 = np.abs(v[:, 2, 0]) ** 2 + 1e-12
-        al = np.degrees(np.arctan(np.sqrt((v2_abs2 + v1_abs2) / (2.0 * v3_abs2))))
+        # Mean alpha: alpha_i = arccos(|e_i[0]|) for each eigenvector e_i (columns
+        # of v), weighted by the pseudo-probabilities (Cloude & Pottier, 1997)
+        alpha_i = np.degrees(np.arccos(np.clip(np.abs(v[:, 0, :]), 0.0, 1.0)))
+        al = np.sum(ps * alpha_i, axis=1)
 
         # Write back
         valid_indices = np.arange(start, end)[valid_mask]
