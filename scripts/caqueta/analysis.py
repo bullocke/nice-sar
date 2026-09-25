@@ -29,8 +29,9 @@ import config
 import numpy as np
 from data import Dataset, DateStack, PairStack, S2Stack
 from scipy import ndimage
-from scipy.special import gammaln
 from scipy.stats import mannwhitneyu
+
+from nice_sar.analysis import disturbance as dist_lib
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +40,8 @@ logger = logging.getLogger(__name__)
 
 
 def coherence_floor(n_looks: int) -> float:
-    """Expected |coherence| estimate when the true coherence is zero.
-
-    For ``N`` independent looks, E|γ̂| = (√π / 2) · Γ(N) / Γ(N + ½). Coherence
-    estimated from few looks is biased high, so even a completely decorrelated
-    pair never reads zero. Looks in the NISAR GUNW products are oversampled, so
-    the effective N is somewhat smaller and the true floor somewhat higher.
-
-    Args:
-        n_looks: Number of looks (``config.LOOKS``: 18 at 20 m, 112 at 80 m).
-    """
-    return float(np.sqrt(np.pi) / 2 * np.exp(gammaln(n_looks) - gammaln(n_looks + 0.5)))
+    """Expected |coherence| of a fully decorrelated pair (see ``nice_sar.analysis.disturbance``)."""
+    return dist_lib.coherence_floor(n_looks)
 
 
 # --- 1. HV event dating --------------------------------------------------------------
@@ -76,12 +68,7 @@ def smooth_db(stack: DateStack, size: int = config.HV_BOXCAR_PX) -> np.ndarray:
     Averaging in linear power (not dB) is the correct way to reduce speckle.
     NaNs are filled with the image median first so they do not spread.
     """
-    out = np.empty_like(stack.values)
-    for i, img in enumerate(stack.values):
-        lin = 10 ** (img / 10)
-        lin = np.where(np.isfinite(lin), lin, np.nanmedian(lin))
-        out[i] = 10 * np.log10(ndimage.uniform_filter(lin, size))
-    return out
+    return dist_lib.boxcar_db(stack.values, size)
 
 
 def hv_event_dating(hv: DateStack) -> EventDating:
@@ -94,19 +81,8 @@ def hv_event_dating(hv: DateStack) -> EventDating:
     circular.
     """
     smooth = smooth_db(hv)
-    n = len(hv.days)
-    k = config.HV_MIN_DATES_EACH_SIDE
-    best = np.full(smooth.shape[1:], -np.inf, dtype="float32")
-    idx = np.full(smooth.shape[1:], -1)
-    for i in range(k - 1, n - k):
-        step = smooth[: i + 1].mean(0) - smooth[i + 1 :].mean(0)
-        better = step > best
-        best[better] = step[better]
-        idx[better] = i
-    valid = idx >= 0
-    t0 = np.where(valid, hv.days[np.clip(idx, 0, n - 1)], np.nan)
-    t1 = np.where(valid, hv.days[np.clip(idx + 1, 0, n - 1)], np.nan)
-    return EventDating(t0.astype(float), t1.astype(float), best, smooth)
+    res = dist_lib.hv_step_dating(smooth, hv.days, config.HV_MIN_DATES_EACH_SIDE)
+    return EventDating(res.t0, res.t1, res.step_db, smooth)
 
 
 def event_pixels(ds: Dataset, ev: EventDating) -> np.ndarray:
@@ -370,14 +346,7 @@ def own_history_change(delta: np.ndarray) -> np.ndarray:
     measures a departure from the case's own recent state, whatever that state
     is (forest, pasture, or regrowth). NaN for the first two pairs.
     """
-    out = np.full(len(delta), np.nan)
-    k = config.CHANGE_BASELINE_PAIRS
-    for i in range(2, len(delta)):
-        prev = delta[max(0, i - k) : i]
-        prev = prev[np.isfinite(prev)]
-        if prev.size >= 2:
-            out[i] = delta[i] - np.median(prev)
-    return out
+    return dist_lib.own_history_change(delta, config.CHANGE_BASELINE_PAIRS)
 
 
 def forest_noise(
@@ -397,25 +366,20 @@ def forest_noise(
     side = max(2, int(round(np.sqrt(n_px))))
     key = (id(ds), side, kind, reference)
     if key not in _NOISE_CACHE:
-        rng = np.random.default_rng(config.SEED)
-        fits = ndimage.binary_erosion(ds.masks["stable_forest"], structure=np.ones((side, side)))
-        ys, xs = np.nonzero(fits)
-        pick = rng.choice(len(ys), min(config.NOISE_SAMPLES, len(ys)), replace=False)
-        vals = getattr(ds, kind).values
-        h = side // 2
-        levels, changes = [], []
-        for y, x in zip(ys[pick], xs[pick], strict=True):
-            rr, cc = np.meshgrid(
-                np.arange(y - h, y - h + side), np.arange(x - h, x - h + side), indexing="ij"
-            )
-            ref = reference_series(ds, rr.ravel(), cc.ravel(), reference)[kind]
-            d = np.nanmean(vals[:, y - h : y - h + side, x - h : x - h + side], axis=(1, 2)) - ref
-            levels.append(d)
-            changes.append(own_history_change(d))
-        _NOISE_CACHE[key] = (
-            float(np.nanstd(np.stack(levels))),
-            float(np.nanstd(np.stack(changes))),
+        est = dist_lib.forest_change_noise(
+            getattr(ds, kind).values,
+            ds.masks["stable_forest"],
+            n_px,
+            reference=reference,
+            ring_forest=(ds.radd.alert_date <= -9999) & (ds.radd.forest == 1),
+            n_samples=config.NOISE_SAMPLES,
+            baseline_pairs=config.CHANGE_BASELINE_PAIRS,
+            inner_px=config.RING_INNER_PX,
+            outer_px=config.RING_OUTER_PX,
+            min_ring_px=config.RING_MIN_PX,
+            seed=config.SEED,
         )
+        _NOISE_CACHE[key] = (est.level_sd, est.change_sd)
     return _NOISE_CACHE[key]
 
 
@@ -432,15 +396,12 @@ def hv_step(ds: Dataset, series: dict[str, np.ndarray]) -> dict:
     carried by the single interval at the split.
     """
     hv = series["HV"] - forest_reference(ds)["HV"]
-    days = ds.hv.days
-    k = config.HV_MIN_DATES_EACH_SIDE
-    step, i = max((hv[: i + 1].mean() - hv[i + 1 :].mean(), i) for i in range(k - 1, len(hv) - k))
-    abrupt = float((hv[i] - hv[i + 1]) / step) if step > 0 else np.nan
+    res = dist_lib.hv_step_dating(hv, ds.hv.days, config.HV_MIN_DATES_EACH_SIDE)
     return {
-        "t0": float(days[i]),
-        "t1": float(days[i + 1]),
-        "step": float(step),
-        "abrupt_frac": abrupt,
+        "t0": float(res.t0),
+        "t1": float(res.t1),
+        "step": float(res.step_db),
+        "abrupt_frac": float(res.abrupt_frac),
     }
 
 
@@ -888,19 +849,10 @@ def local_ring(ds: Dataset, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
     outline out of the ring; RADD-alerted pixels and non-forest are excluded.
     Returns a boolean mask on the full grid (computed on a local crop for speed).
     """
-    h, w = ds.grid.shape
-    pad = config.RING_OUTER_PX + 1
-    r0, r1 = max(rows.min() - pad, 0), min(rows.max() + pad + 1, h)
-    c0, c1 = max(cols.min() - pad, 0), min(cols.max() + pad + 1, w)
-    mask = np.zeros((r1 - r0, c1 - c0), bool)
-    mask[rows - r0, cols - c0] = True
-    ring = ndimage.binary_dilation(mask, iterations=config.RING_OUTER_PX)
-    ring &= ~ndimage.binary_dilation(mask, iterations=config.RING_INNER_PX)
-    crop = (slice(r0, r1), slice(c0, c1))
-    ring &= (ds.radd.alert_date[crop] <= -9999) & (ds.radd.forest[crop] == 1)
-    out = np.zeros(ds.grid.shape, bool)
-    out[crop] = ring
-    return out
+    area = np.zeros(ds.grid.shape, bool)
+    area[rows, cols] = True
+    forest = (ds.radd.alert_date <= -9999) & (ds.radd.forest == 1)
+    return dist_lib.forest_ring(area, forest, config.RING_INNER_PX, config.RING_OUTER_PX)
 
 
 def reference_series(
