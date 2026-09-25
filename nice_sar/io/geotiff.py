@@ -7,6 +7,7 @@ Public functions:
 - :func:`export_geotiff` — Write a single-band float GeoTIFF with optional JSON sidecar
 - :func:`write_rgb_geotiff_uint8` — Write a 3-band uint8 RGB GeoTIFF with per-band stretch
 - :func:`read_geotiff` — Read a GeoTIFF into a numpy array with CRS/transform metadata
+- :func:`write_geotiff` — Backward-compatible convenience wrapper used by the CLI
 """
 
 from __future__ import annotations
@@ -70,6 +71,47 @@ def export_geotiff(
 
     logger.info("Exported: %s", output_path.name)
     _write_sidecar(output_path, {"description": description}, band_count=1)
+
+
+def write_geotiff(
+    output_path: str | Path,
+    data: np.ndarray,
+    *,
+    transform: Affine | None = None,
+    crs: CRS | None = None,
+    count: int = 1,
+    description: str = "",
+    band_descriptions: list[str] | None = None,
+) -> None:
+    """Write a GeoTIFF using the historical CLI-friendly signature.
+
+    Args:
+        output_path: Destination file path.
+        data: Single-band or RGB array.
+        transform: Affine transform. Required for georeferenced output.
+        crs: Coordinate reference system. Required for georeferenced output.
+        count: Number of output bands. ``3`` routes to the RGB writer.
+        description: Optional single-band description.
+        band_descriptions: Optional RGB band descriptions.
+
+    Raises:
+        ValueError: If georeferencing is missing for a requested geospatial write.
+    """
+    if count == 3:
+        if transform is None or crs is None:
+            raise ValueError("RGB GeoTIFF output requires both transform and crs.")
+        write_rgb_geotiff_uint8(
+            np.asarray(data),
+            output_path,
+            transform,
+            crs,
+            band_descriptions=band_descriptions,
+        )
+        return
+
+    if transform is None or crs is None:
+        raise ValueError("Single-band GeoTIFF output requires both transform and crs.")
+    export_geotiff(np.asarray(data), output_path, transform, crs, description=description)
 
 
 def write_rgb_geotiff_uint8(

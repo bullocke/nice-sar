@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nice_sar.cli import build_parser, cmd_info, main
+from nice_sar.cli import build_parser, cmd_forests, cmd_info, main
 
 
 class TestBuildParser:
@@ -54,6 +54,29 @@ class TestBuildParser:
         assert args.method == "cusum"
         assert len(args.inputs) == 2
 
+    def test_forests_generate_subcommand(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "forests",
+                "generate",
+                "/tmp/in.h5",
+                "/tmp/out.tif",
+                "--method",
+                "gcov_hv_threshold",
+            ]
+        )
+        assert args.command == "forests"
+        assert args.subcommand == "generate"
+        assert args.method == "gcov_hv_threshold"
+
+    def test_forests_list_methods_subcommand(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["forests", "list-methods", "--implemented-only"])
+        assert args.command == "forests"
+        assert args.subcommand == "list-methods"
+        assert args.implemented_only is True
+
 
 class TestCmdInfo:
     def test_info_prints_json(self, synthetic_gcov_path: Path, capsys: pytest.CaptureFixture) -> None:
@@ -73,6 +96,41 @@ class TestCmdInfo:
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["product_type"] == "GUNW"
+
+
+class TestCmdForests:
+    def test_list_methods_prints_json(self, capsys: pytest.CaptureFixture) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["forests", "list-methods"])
+        cmd_forests(args)
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        names = {item["name"] for item in data}
+        assert "gcov_hv_threshold" in names
+
+    def test_generate_writes_mask_and_confidence(
+        self,
+        synthetic_gcov_path: Path,
+        tmp_path: Path,
+    ) -> None:
+        parser = build_parser()
+        output = tmp_path / "forest_mask.tif"
+        confidence = tmp_path / "forest_confidence.tif"
+        args = parser.parse_args(
+            [
+                "forests",
+                "generate",
+                str(synthetic_gcov_path),
+                str(output),
+                "--method",
+                "gcov_hv_threshold_ramachandran",
+                "--confidence-output",
+                str(confidence),
+            ]
+        )
+        cmd_forests(args)
+        assert output.exists()
+        assert confidence.exists()
 
 
 class TestSearchDownloadCommands:
