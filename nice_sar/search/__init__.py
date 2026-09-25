@@ -12,6 +12,7 @@ from nice_sar.search.earthdata import search_earthdata
 from nice_sar.search.maturity import (
     Maturity,
     NisarGranuleName,
+    granule_url,
     maturity_from_collection,
     maturity_from_crid,
     nisar_short_names,
@@ -23,6 +24,7 @@ __all__ = [
     "Maturity",
     "NisarGranuleName",
     "get_result_size_bytes",
+    "granule_url",
     "maturity_from_collection",
     "maturity_from_crid",
     "nisar_short_names",

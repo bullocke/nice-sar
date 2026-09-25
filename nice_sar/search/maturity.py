@@ -20,6 +20,7 @@ Public API:
 - :func:`maturity_from_collection` — Maturity implied by a collection short name
 - :func:`maturity_from_crid` — Maturity implied by a Composite Release ID
 - :class:`NisarGranuleName` / :func:`parse_granule_name` — Parse granule IDs
+- :func:`granule_url` — ASF HTTPS download URL for a granule ID
 """
 
 from __future__ import annotations
@@ -282,3 +283,28 @@ def parse_granule_name(name: str) -> NisarGranuleName:
         )
 
     raise ValueError(f"Not a recognized NISAR L1-L3 granule name: {name!r}")
+
+
+#: Base URL of NISAR products in the ASF Earthdata Cloud archive.
+ASF_NISAR_BASE_URL = "https://nisar.asf.earthdatacloud.nasa.gov/NISAR"
+
+
+def granule_url(granule_id: str) -> str:
+    """Return the ASF HTTPS URL of a NISAR granule from its ID.
+
+    The URL follows the archive layout
+    ``{base}/{collection}/{granule_id}/{granule_id}.h5``, with the collection
+    chosen from the product type and the maturity implied by the CRID. This
+    pins an exact granule without a search, which keeps tutorials and analyses
+    reproducible. Opening the URL needs an Earthdata login (for example through
+    :func:`nice_sar.auth.get_https_filesystem`).
+
+    Args:
+        granule_id: NISAR granule ID (a file name or ``.h5`` suffix is accepted).
+
+    Returns:
+        HTTPS URL of the granule's HDF5 file.
+    """
+    g = parse_granule_name(granule_id)
+    collection = nisar_short_names(g.product, g.maturity)[0]
+    return f"{ASF_NISAR_BASE_URL}/{collection}/{g.granule_id}/{g.granule_id}.h5"

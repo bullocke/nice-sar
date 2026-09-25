@@ -149,3 +149,26 @@ class TestParseGranuleName:
     def test_invalid(self) -> None:
         with pytest.raises(ValueError, match="Not a recognized"):
             parse_granule_name("S1A_IW_SLC__1SDV_20250101T000000")
+
+
+class TestGranuleUrl:
+    def test_provisional_gcov(self) -> None:
+        from nice_sar.search.maturity import granule_url
+
+        gid = (
+            "NISAR_L2_PR_GCOV_023_068_D_093_2005_DHDH_A_20260618T222633_20260618T222707"
+            "_P05023_N_F_J_001"
+        )
+        assert granule_url(gid + ".h5") == (
+            "https://nisar.asf.earthdatacloud.nasa.gov/NISAR/NISAR_L2_GCOV_PROVISIONAL_V1/"
+            f"{gid}/{gid}.h5"
+        )
+
+    def test_gunw_pair(self) -> None:
+        from nice_sar.search.maturity import granule_url
+
+        gid = (
+            "NISAR_L2_PR_GUNW_004_083_D_088_006_2000_SH_20251103T232159_20251103T232233"
+            "_20251127T232159_20251127T232233_P05023_N_F_J_001"
+        )
+        assert "/NISAR_L2_GUNW_PROVISIONAL_V1/" in granule_url(gid)
