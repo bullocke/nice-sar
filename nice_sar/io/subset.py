@@ -60,6 +60,14 @@ _GUNW_LAYER_GROUP: dict[str, str] = {
     "wrappedInterferogram": "wrappedInterferogram",
 }
 
+# Layers that exist only at 20 m (wrappedInterferogram group)
+_GUNW_20M_ONLY = {"wrappedInterferogram"}
+# Layers that exist only at 80 m (unwrappedInterferogram group)
+_GUNW_80M_ONLY = {
+    "unwrappedPhase", "connectedComponents",
+    "ionospherePhaseScreen", "ionospherePhaseScreenUncertainty",
+}
+
 # GOFF known layers
 _GOFF_LAYERS = {"alongTrackOffset", "slantRangeOffset", "snr"}
 
@@ -167,6 +175,7 @@ def estimate_subset_size(
     row_slice: slice,
     col_slice: slice,
     layers: Sequence[str] | None = None,
+    posting: int | None = None,
 ) -> tuple[int, str]:
     """Estimate the download size for a spatial subset.
 
@@ -178,6 +187,7 @@ def estimate_subset_size(
         row_slice: Row slice from :func:`bbox_to_pixel_slices`.
         col_slice: Column slice from :func:`bbox_to_pixel_slices`.
         layers: Layer names (GUNW/GOFF only). If ``None``, uses defaults.
+        posting: Ground posting for GUNW (``20`` or ``80``).
 
     Returns:
         Tuple of (total_bytes, human_readable_string).
@@ -187,7 +197,7 @@ def estimate_subset_size(
     total = 0
 
     for pol in polarizations:
-        paths = _get_dataset_paths(product, frequency, pol, layers)
+        paths = _get_dataset_paths(product, frequency, pol, layers, posting)
         for ds_path in paths:
             if ds_path in h5_file:
                 itemsize = h5_file[ds_path].dtype.itemsize
@@ -209,6 +219,7 @@ def _get_dataset_paths(
     frequency: str,
     polarization: str,
     layers: Sequence[str] | None = None,
+    posting: int | None = None,
 ) -> list[str]:
     """Return HDF5 dataset paths for a product/frequency/polarization combination."""
     grid = f"/science/LSAR/{product}/grids/frequency{frequency}"
@@ -225,7 +236,11 @@ def _get_dataset_paths(
             layers = ["unwrappedPhase"]
         paths = []
         for lay in layers:
-            grp = _GUNW_LAYER_GROUP.get(lay, "unwrappedInterferogram")
+            # coherenceMagnitude exists at both postings — resolve via posting
+            if lay == "coherenceMagnitude" and posting == 20:
+                grp = "wrappedInterferogram"
+            else:
+                grp = _GUNW_LAYER_GROUP.get(lay, "unwrappedInterferogram")
             paths.append(f"{grid}/{grp}/{polarization}/{lay}")
         return paths
 
@@ -258,6 +273,18 @@ def _layer_label(ds_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _gunw_ref_group(layers: Sequence[str] | None, posting: int | None) -> str:
+    """Determine the GUNW reference group for coordinate reading."""
+    if posting == 20:
+        return "wrappedInterferogram"
+    if posting == 80 or posting is None:
+        # When posting is None, infer from layers
+        if layers and all(lay in _GUNW_20M_ONLY for lay in layers):
+            return "wrappedInterferogram"
+        return "unwrappedInterferogram"
+    return "unwrappedInterferogram"
+
+
 def subset_product(
     source: PathType,
     product: str,
@@ -268,6 +295,7 @@ def subset_product(
     output_dir: PathType = Path("nisar_subset"),
     filesystem: fsspec.AbstractFileSystem | None = None,
     confirm: bool = True,
+    posting: int | None = None,
 ) -> list[Path]:
     """Download a spatial subset of a NISAR product as GeoTIFF(s).
 
@@ -288,6 +316,11 @@ def subset_product(
         filesystem: Authenticated filesystem for remote paths.
         confirm: If ``True``, print an estimate and prompt for confirmation
             before downloading. Set ``False`` for non-interactive / GUI use.
+        posting: Ground posting in metres for GUNW products (``20`` or ``80``).
+            Controls which coordinate grid is used and which ``coherenceMagnitude``
+            layer is read.  When ``None`` (default) the posting is inferred from
+            the requested *layers*: layers that exist only at 20 m automatically
+            select the 20 m grid.  Ignored for non-GUNW products.
 
     Returns:
         List of paths to the exported GeoTIFF files.
@@ -320,13 +353,14 @@ def subset_product(
         granule_name = Path(source_str.split("?")[0]).stem  # strip query params
 
         # 1. Read coordinate metadata (tiny transfer)
-        # GUNW has per-subgroup coordinates; use 80 m (unwrappedInterferogram)
-        # as the reference grid for bbox computation.  Per-layer coordinate
-        # differences are handled during the read step below.
+        # GUNW has per-subgroup coordinates at 80 m and 20 m postings.
+        # Select the reference group based on the posting parameter.
+        ref_group: str | None = None
         if product == "GUNW":
+            ref_group = _gunw_ref_group(layers, posting)
             ref_pol = polarizations[0] if polarizations else "HH"
             crs, full_transform, x_coords, y_coords = _gunw_projection_info(
-                h5_file, frequency, "unwrappedInterferogram", ref_pol
+                h5_file, frequency, ref_group, ref_pol
             )
         else:
             crs, full_transform, x_coords, y_coords = get_projection_info_l2(
@@ -351,7 +385,8 @@ def subset_product(
 
         # 4. Estimate size
         total_bytes, size_str = estimate_subset_size(
-            h5_file, product, frequency, polarizations, row_slice, col_slice, layers
+            h5_file, product, frequency, polarizations,
+            row_slice, col_slice, layers, posting,
         )
         nrows = row_slice.stop - row_slice.start
         ncols = col_slice.stop - col_slice.start
@@ -399,15 +434,49 @@ def subset_product(
         outputs: list[Path] = []
 
         for pol in polarizations:
-            ds_paths = _get_dataset_paths(product, frequency, pol, layers)
+            ds_paths = _get_dataset_paths(product, frequency, pol, layers, posting)
             for ds_path in ds_paths:
                 if ds_path not in h5_file:
                     logger.warning("Dataset not found, skipping: %s", ds_path)
                     continue
 
+                # For GUNW, check if this layer lives on a different grid
+                # than the reference.  If so, recompute pixel slices.
+                path_parts = ds_path.split("/")
+                layer_group = path_parts[-3] if len(path_parts) >= 3 else None
+                if (
+                    product == "GUNW"
+                    and layer_group is not None
+                    and layer_group != ref_group
+                ):
+                    _, _, lx, ly = _gunw_projection_info(
+                        h5_file, frequency, layer_group, pol
+                    )
+                    lr, lc, lsub_x, lsub_y = bbox_to_pixel_slices(
+                        lx, ly, crs, resolved_bbox
+                    )
+                    lx_sp = (
+                        float(lsub_x[1] - lsub_x[0])
+                        if len(lsub_x) > 1
+                        else float(full_transform.a)
+                    )
+                    ly_sp = (
+                        float(lsub_y[1] - lsub_y[0])
+                        if len(lsub_y) > 1
+                        else float(full_transform.e)
+                    )
+                    cur_row, cur_col = lr, lc
+                    cur_transform = Affine(
+                        lx_sp, 0.0, float(lsub_x[0]) - lx_sp / 2.0,
+                        0.0, ly_sp, float(lsub_y[0]) - ly_sp / 2.0,
+                    )
+                else:
+                    cur_row, cur_col = row_slice, col_slice
+                    cur_transform = sub_transform
+
                 dataset = h5_file[ds_path]
                 logger.info("Reading subset: %s", ds_path)
-                raw = dataset[row_slice, col_slice]
+                raw = dataset[cur_row, cur_col]
 
                 # Determine output dtype
                 layer_name = ds_path.split("/")[-1]
@@ -431,7 +500,7 @@ def subset_product(
                 export_geotiff(
                     data,
                     out_path,
-                    transform=sub_transform,
+                    transform=cur_transform,
                     crs=crs,
                     description=f"{product} {pol} {layer_name}",
                 )
@@ -458,12 +527,12 @@ def subset_product(
                         "north": resolved_bbox[3],
                     },
                     "pixel_window": {
-                        "row_start": row_slice.start,
-                        "row_stop": row_slice.stop,
-                        "col_start": col_slice.start,
-                        "col_stop": col_slice.stop,
-                        "height": nrows,
-                        "width": ncols,
+                        "row_start": cur_row.start,
+                        "row_stop": cur_row.stop,
+                        "col_start": cur_col.start,
+                        "col_stop": cur_col.stop,
+                        "height": cur_row.stop - cur_row.start,
+                        "width": cur_col.stop - cur_col.start,
                     },
                     "dtype": str(data.dtype),
                     "output": str(out_path),

@@ -433,6 +433,7 @@ def cmd_subset(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
             filesystem=fs,
             confirm=not args.no_confirm,
+            posting=args.posting,
         )
         all_outputs.extend(outputs)
 
@@ -709,6 +710,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Polarization to download (repeatable, e.g. --polarization HH --polarization HV)",
     )
     p_sub.add_argument("--layer", default=None, help="Layer name (GUNW/GOFF)")
+    p_sub.add_argument(
+        "--posting",
+        type=int,
+        default=None,
+        choices=[20, 80],
+        help="GUNW ground posting in metres (20 or 80)",
+    )
     p_sub.add_argument("--max-granules", type=int, default=1, help="Max granules to download")
     p_sub.add_argument(
         "-o",

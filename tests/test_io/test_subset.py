@@ -243,6 +243,94 @@ class TestSubsetProduct:
         assert len(outputs) == 1
         assert outputs[0].exists()
 
+    def test_subset_gunw_20m_coherence(
+        self, synthetic_gunw_path: Path, tmp_path: Path
+    ) -> None:
+        """Subset GUNW coherence at 20 m posting — uses wrappedInterferogram grid."""
+        outputs = subset_product(
+            source=synthetic_gunw_path,
+            product="GUNW",
+            bbox=_FULL_BBOX,
+            frequency="A",
+            polarizations=["HH"],
+            layers=["coherenceMagnitude"],
+            posting=20,
+            output_dir=tmp_path / "gunw_20m",
+            confirm=False,
+        )
+        assert len(outputs) == 1
+        assert outputs[0].exists()
+        with rasterio.open(outputs[0]) as ds:
+            data = ds.read(1)
+            # 20 m grid is 256×256; bbox covers a subset (~95×200+ pixels)
+            assert data.shape[0] >= 50
+            assert data.shape[1] >= 50
+            assert data.dtype == np.float32
+
+    def test_subset_gunw_80m_coherence(
+        self, synthetic_gunw_path: Path, tmp_path: Path
+    ) -> None:
+        """Subset GUNW coherence at 80 m posting — uses unwrappedInterferogram grid."""
+        outputs = subset_product(
+            source=synthetic_gunw_path,
+            product="GUNW",
+            bbox=_FULL_BBOX,
+            frequency="A",
+            polarizations=["HH"],
+            layers=["coherenceMagnitude"],
+            posting=80,
+            output_dir=tmp_path / "gunw_80m",
+            confirm=False,
+        )
+        assert len(outputs) == 1
+        with rasterio.open(outputs[0]) as ds:
+            data = ds.read(1)
+            # 80 m grid is 64×64
+            assert data.shape[0] <= 64
+            assert data.shape[1] <= 64
+
+    def test_subset_gunw_20m_wrapped(
+        self, synthetic_gunw_path: Path, tmp_path: Path
+    ) -> None:
+        """wrappedInterferogram auto-infers 20 m posting when posting is None."""
+        outputs = subset_product(
+            source=synthetic_gunw_path,
+            product="GUNW",
+            bbox=_FULL_BBOX,
+            frequency="A",
+            polarizations=["HH"],
+            layers=["wrappedInterferogram"],
+            output_dir=tmp_path / "gunw_wrapped",
+            confirm=False,
+        )
+        assert len(outputs) == 1
+        with rasterio.open(outputs[0]) as ds:
+            data = ds.read(1)
+            # wrappedInterferogram is complex → exported as amplitude (float32)
+            assert data.dtype == np.float32
+            # 20 m grid: subset should be > 50 pixels
+            assert data.shape[0] >= 50
+
+    def test_subset_gunw_20m_has_more_pixels(
+        self, synthetic_gunw_path: Path, tmp_path: Path
+    ) -> None:
+        """20 m coherence should have ~4× more pixels than 80 m coherence."""
+        out80 = subset_product(
+            source=synthetic_gunw_path, product="GUNW", bbox=_FULL_BBOX,
+            frequency="A", polarizations=["HH"],
+            layers=["coherenceMagnitude"], posting=80,
+            output_dir=tmp_path / "cmp80", confirm=False,
+        )
+        out20 = subset_product(
+            source=synthetic_gunw_path, product="GUNW", bbox=_FULL_BBOX,
+            frequency="A", polarizations=["HH"],
+            layers=["coherenceMagnitude"], posting=20,
+            output_dir=tmp_path / "cmp20", confirm=False,
+        )
+        with rasterio.open(out80[0]) as ds80, rasterio.open(out20[0]) as ds20:
+            assert ds20.width > ds80.width
+            assert ds20.height > ds80.height
+
     def test_subset_gslc(self, synthetic_gslc_path: Path, tmp_path: Path) -> None:
         """Subset GSLC — complex data should be exported as amplitude."""
         outputs = subset_product(
